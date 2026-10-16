@@ -21,8 +21,12 @@ always listed along the bottom of the screen.
 ## Install
 
 ```sh
-cargo install --path .
+cargo install mull          # from crates.io
+cargo install --path .      # from a checkout
 ```
+
+Each [GitHub release](https://github.com/bricef/mull/releases) also has
+prebuilt binaries for Linux, macOS and Windows.
 
 ## Use
 
@@ -150,8 +154,13 @@ Folds are view state and aren't saved.
 ## Developing
 
 ```sh
-just check    # rustfmt, clippy, and the tests
+just toolchain   # install the pinned Rust (rust-toolchain.toml)
+just ci          # rustfmt, clippy and the tests: exactly what CI runs
+just --list      # everything else
 ```
+
+Releases are two commands, `just mint patch` and `just push-release`;
+`docs/releasing.md` covers what happens next and the one-time setup.
 
 `docs/design.md` explains the model, the layout, and the open questions.
 The key tables above are checked against `mull --keys` by the tests, so

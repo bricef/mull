@@ -2,6 +2,13 @@
 name = "mull"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "A keyboard-driven mind mapper for the terminal, with plain Markdown files"
+repository = "https://github.com/bricef/mull"
+readme = "README.md"
+keywords = ["mind-map", "markdown", "tui", "terminal", "outline"]
+categories = ["command-line-utilities", "text-editors"]
+include = ["/src", "/tests", "/README.md", "/LICENSE*"]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -13,3 +20,9 @@ unicode-width = "0.2.2"
 [dev-dependencies]
 pretty_assertions = "1.4.1"
 proptest = "1.12.0"
+
+# Release binaries: smaller and a little faster, at the cost of build time.
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

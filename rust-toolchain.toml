@@ -1,0 +1,6 @@
+# The one Rust everyone builds with: dev machines and CI alike. Bump it
+# deliberately, in its own commit.
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

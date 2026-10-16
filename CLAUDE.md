@@ -2,7 +2,12 @@
 
 Terminal mind mapper (Rust, ratatui 0.30). Maps are Markdown files.
 
-- Gate: `just check` (fmt, clippy `-D warnings`, tests). Run it before committing.
+- Gate: `just ci` (fmt, clippy `-D warnings`, tests), the same recipe CI
+  runs, on the toolchain pinned in `rust-toolchain.toml`. Run it before
+  committing. Workflows only install just and call recipes; put new CI
+  logic in the justfile, not in workflow YAML.
+- Releases: `just mint <level>` then `just push-release` (see
+  `docs/releasing.md`). Both are outward-facing: only when Brice asks.
 - Design, format rules and open questions: `docs/design.md`. Read it before
   changing the file format, the layout or the keys.
 - Keys are bound only in `src/keymap.rs` (`BINDINGS`); the hint bar
