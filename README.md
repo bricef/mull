@@ -151,6 +151,13 @@ Folds are view state and aren't saved.
 | `k` `↑` | Scroll up |
 | `Esc` `q` `?` | Close (any other key does too) |
 
+## Licence
+
+mull is licensed under either of the [Apache License, Version 2.0](LICENSE-APACHE)
+or the [MIT licence](LICENSE-MIT), at your option. Unless you say otherwise,
+any contribution you submit for inclusion in mull is dual-licensed the same
+way, without any additional terms or conditions.
+
 ## Developing
 
 ```sh

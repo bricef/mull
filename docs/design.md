@@ -116,6 +116,5 @@ means 24-bit, otherwise the nearest xterm-256 colour, and `NO_COLOR` (or
    the system clipboard via xclip/wl-clipboard.
 6. **Search** (`/`, `n`, `N`), **export** (HTML via Markmap, PNG), and
    **mouse** support are the obvious next features.
-7. **Licence.** None chosen yet.
-8. **More themes.** A light palette (Catppuccin Latte) for light terminals,
+7. **More themes.** A light palette (Catppuccin Latte) for light terminals,
    chosen with a `--theme` flag or a config file.
