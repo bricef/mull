@@ -1,10 +1,11 @@
 //! Drawing the screen: the map, a status line, and the key hints under it.
+//! Every style comes from the [`Theme`].
 
 use ratatui::{
     Frame,
     buffer::Buffer,
     layout::{Constraint, Position, Rect},
-    style::{Color, Modifier, Style},
+    style::Style,
     text::{Line, Span},
     widgets::{Block, Clear, Paragraph},
 };
@@ -14,20 +15,16 @@ use crate::{
     app::{App, Mode},
     keymap::{self, Context, Group, Hint},
     layout::Layout,
+    theme::Theme,
 };
-
-const CONNECTOR: Style = Style::new().fg(Color::DarkGray);
-const KEY: Style = Style::new().add_modifier(Modifier::REVERSED);
-const TITLE: Style = Style::new().add_modifier(Modifier::BOLD);
-const MESSAGE: Style = Style::new().fg(Color::Yellow);
 
 /// The hint bar grows to this many lines on narrow terminals, then drops
 /// hints instead.
 const MAX_HINT_LINES: usize = 3;
 
-pub fn draw(frame: &mut Frame, app: &mut App) {
+pub fn draw(frame: &mut Frame, app: &mut App, theme: &Theme) {
     let area = frame.area();
-    let hints = hint_bar(app, area.width as usize);
+    let hints = hint_bar(app, theme, area.width as usize);
     let [map_area, status_area, hint_area] = ratatui::layout::Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(1),
@@ -37,15 +34,26 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let map = app.layout();
     follow_selection(app, &map, map_area);
-    draw_map(frame.buffer_mut(), map_area, app, &map);
+    frame.render_widget(Block::new().style(theme.canvas), map_area);
+    draw_map(frame.buffer_mut(), map_area, app, &map, theme);
     if let Some(cursor) = edit_cursor(app, &map, map_area) {
         frame.set_cursor_position(cursor);
     }
-    frame.render_widget(status_line(app, status_area.width as usize), status_area);
-    frame.render_widget(Paragraph::new(hints), hint_area);
+    let status = status_line(app, theme, status_area.width as usize);
+    frame.render_widget(Paragraph::new(status).style(theme.bar), status_area);
+    frame.render_widget(Paragraph::new(hints).style(theme.bar), hint_area);
     if let Mode::Help { .. } = app.mode {
         // Over everything but the hints, which say how to scroll and close.
-        draw_help(frame, map_area.union(status_area), app);
+        draw_help(frame, map_area.union(status_area), app, theme);
+    }
+}
+
+/// Which bindings the keys follow in `mode`.
+fn context(mode: &Mode) -> Context {
+    match mode {
+        Mode::Map => Context::Map,
+        Mode::Edit { .. } => Context::Typing,
+        Mode::Help { .. } => Context::Help,
     }
 }
 
@@ -92,10 +100,14 @@ fn reveal(start: isize, len: isize, from: isize, to: isize, margin: isize) -> is
     start
 }
 
-fn draw_map(buf: &mut Buffer, area: Rect, app: &App, map: &Layout) {
+/// Each first-level topic and everything under it share an accent: its
+/// lines, its fold markers, and its highlight when selected. The root and
+/// first-level topics stand out in bold; deeper topics are plain text.
+fn draw_map(buf: &mut Buffer, area: Rect, app: &App, map: &Layout, theme: &Theme) {
     let editing = matches!(app.mode, Mode::Edit { .. });
     let view = app.viewport;
     for c in &map.connectors {
+        let style = theme.branch(c.branch).line;
         put(
             buf,
             area,
@@ -103,25 +115,26 @@ fn draw_map(buf: &mut Buffer, area: Rect, app: &App, map: &Layout) {
             c.x,
             c.y,
             c.ch.encode_utf8(&mut [0; 4]),
-            CONNECTOR,
+            style,
         );
     }
     for node in &map.nodes {
-        let mut style = Style::new();
-        if node.path.is_empty() {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-        if node.path == app.selected {
-            style = style.add_modifier(if editing {
-                Modifier::UNDERLINED
+        let branch = theme.branch(node.path.first().copied());
+        let style = if node.path != app.selected {
+            if node.path.len() <= 1 {
+                branch.label
             } else {
-                Modifier::REVERSED
-            });
-        }
+                theme.topic
+            }
+        } else if editing {
+            theme.editing
+        } else {
+            branch.selected
+        };
         put(buf, area, view, node.x, node.y, &node.label, style);
         if let Some(marker) = &node.fold_marker {
             let x = node.x + node.label_width() + 1;
-            put(buf, area, view, x, node.y, marker, CONNECTOR);
+            put(buf, area, view, x, node.y, marker, branch.line);
         }
     }
 }
@@ -169,18 +182,52 @@ fn edit_cursor(app: &App, map: &Layout, area: Rect) -> Option<Position> {
 
 // The status line
 
-fn status_line(app: &App, width: usize) -> Line<'static> {
+/// The mode, the file (marked when unsaved), then the latest message or,
+/// failing that, the path from the root to the selection.
+fn status_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
+    let mode = match app.mode {
+        Mode::Map => " MAP ",
+        Mode::Edit { .. } => " EDIT ",
+        Mode::Help { .. } => " HELP ",
+    };
     let name = app.file.file_name().map_or_else(
         || app.file.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
-    let file = format!(" {name}{} ", if app.is_dirty() { " *" } else { "" });
-    let room = width.saturating_sub(file.width() + 1);
-    let detail = match &app.message {
-        Some(message) => Span::styled(message.clone(), MESSAGE),
-        None => Span::styled(keep_end(&app.breadcrumb(), room), CONNECTOR),
-    };
-    Line::from(vec![Span::styled(file, KEY), Span::raw(" "), detail])
+    let mut spans = vec![
+        Span::styled(mode, theme.mode(context(&app.mode)).badge),
+        Span::styled(format!(" {name} "), theme.file),
+    ];
+    if app.is_dirty() {
+        spans.push(Span::styled("* ", theme.dirty));
+    }
+    spans.push(Span::raw(" "));
+    let room = width.saturating_sub(spans.iter().map(Span::width).sum());
+    match &app.message {
+        Some(message) => spans.push(Span::styled(message.text.clone(), theme.tone(message.tone))),
+        None => spans.extend(breadcrumb(&keep_end(&app.breadcrumb(), room), theme)),
+    }
+    Line::from(spans)
+}
+
+/// A breadcrumb in colour: dim ancestors and separators, then the selected
+/// topic.
+fn breadcrumb(text: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let parts: Vec<&str> = text.split(" › ").collect();
+    let last = parts.len() - 1;
+    let mut spans = Vec::new();
+    for (i, part) in parts.into_iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" › ", theme.crumb_separator));
+        }
+        let style = if i == last {
+            theme.crumb_current
+        } else {
+            theme.crumb
+        };
+        spans.push(Span::styled(part.to_string(), style));
+    }
+    spans
 }
 
 /// The end of `text` that fits in `width` columns, after a `…` if cut.
@@ -203,12 +250,11 @@ fn keep_end(text: &str, width: usize) -> String {
 
 // Key hints
 
-fn hint_bar(app: &App, width: usize) -> Vec<Line<'static>> {
-    let items: Vec<(String, &str)> = match app.mode {
-        Mode::Help { .. } => keymap::hints(Context::Help).map(entry).collect(),
-        Mode::Map => keymap::hints(Context::Map).map(entry).collect(),
-        Mode::Edit { .. } => keymap::hints(Context::Typing).map(entry).collect(),
-    };
+/// The keys for the current mode, in the mode's colour.
+fn hint_bar(app: &App, theme: &Theme, width: usize) -> Vec<Line<'static>> {
+    let context = context(&app.mode);
+    let key_style = theme.mode(context).key;
+    let items: Vec<(String, &str)> = keymap::hints(context).map(entry).collect();
     let widths: Vec<usize> = items
         .iter()
         .map(|(k, l)| k.width() + 1 + l.width())
@@ -222,8 +268,8 @@ fn hint_bar(app: &App, width: usize) -> Vec<Line<'static>> {
                     spans.push(Span::raw("  "));
                 }
                 let (keys, label) = &items[i];
-                spans.push(Span::styled(keys.clone(), KEY));
-                spans.push(Span::raw(format!(" {label}")));
+                spans.push(Span::styled(keys.clone(), key_style));
+                spans.push(Span::styled(format!(" {label}"), theme.hint_label));
             }
             Line::from(spans)
         })
@@ -277,9 +323,9 @@ const GUTTER: usize = 4;
 
 /// Every binding, grouped, in as many columns as fit across the screen. A
 /// page taller than the screen scrolls.
-fn draw_help(frame: &mut Frame, area: Rect, app: &mut App) {
+fn draw_help(frame: &mut Frame, area: Rect, app: &mut App, theme: &Theme) {
     let inner = Block::bordered().inner(area);
-    let columns = help_columns(inner.width.saturating_sub(1) as usize);
+    let columns = help_columns(inner.width.saturating_sub(1) as usize, theme);
     let page_height = columns.iter().map(Vec::len).max().unwrap_or(0);
     let max_scroll = page_height.saturating_sub(inner.height as usize);
     let scroll = match &mut app.mode {
@@ -290,9 +336,12 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &mut App) {
         _ => 0,
     };
 
-    let mut block = Block::bordered().title(" All keys ");
+    let mut block = Block::bordered()
+        .style(theme.help_text)
+        .border_style(theme.help_border)
+        .title(Span::styled(" All keys ", theme.help_title));
     if scroll < max_scroll {
-        block = block.title_bottom(" more below ");
+        block = block.title_bottom(Span::styled(" more below ", theme.help_more));
     }
     frame.render_widget(Clear, area);
     frame.render_widget(block, area);
@@ -313,8 +362,11 @@ fn draw_help(frame: &mut Frame, area: Rect, app: &mut App) {
 }
 
 /// The help sections in the fewest, shortest columns that fit `width`.
-fn help_columns(width: usize) -> Vec<Vec<Line<'static>>> {
-    let sections: Vec<Vec<Line<'static>>> = Group::ALL.into_iter().map(help_section).collect();
+fn help_columns(width: usize, theme: &Theme) -> Vec<Vec<Line<'static>>> {
+    let sections: Vec<Vec<Line<'static>>> = Group::ALL
+        .into_iter()
+        .map(|group| help_section(group, theme))
+        .collect();
     let column_width = sections
         .iter()
         .flatten()
@@ -330,20 +382,22 @@ fn help_columns(width: usize) -> Vec<Vec<Line<'static>>> {
         .unwrap_or_else(|| stack(&sections, usize::MAX))
 }
 
-fn help_section(group: Group) -> Vec<Line<'static>> {
+/// A group's title and bindings, keys in the group's accent.
+fn help_section(group: Group, theme: &Theme) -> Vec<Line<'static>> {
     let key_width = keymap::BINDINGS
         .iter()
         .map(|b| b.keys_label().width())
         .max()
         .unwrap_or(0);
-    let mut section = vec![Line::styled(group.title(), TITLE)];
+    let accent = theme.group(group);
+    let mut section = vec![Line::styled(group.title(), accent)];
     for binding in keymap::BINDINGS.iter().filter(|b| b.group == group) {
         let keys = binding.keys_label();
         let pad = " ".repeat(key_width - keys.width());
         section.push(Line::from(vec![
             Span::raw("  "),
-            Span::styled(keys, KEY),
-            Span::raw(format!("{pad}  {}", binding.description)),
+            Span::styled(keys, accent),
+            Span::styled(format!("{pad}  {}", binding.description), theme.help_text),
         ]));
     }
     section
@@ -373,20 +427,37 @@ fn stack(sections: &[Vec<Line<'static>>], height: usize) -> Vec<Vec<Line<'static
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tree::Node;
-    use ratatui::{Terminal, backend::TestBackend};
+    use crate::{
+        app::Tone,
+        theme::{ColorDepth, Theme},
+        tree::Node,
+    };
+    use ratatui::{
+        Terminal,
+        backend::TestBackend,
+        style::{Color, Modifier},
+    };
     use std::path::PathBuf;
 
-    fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+    fn render(app: &mut App, theme: &Theme, width: u16, height: u16) -> Buffer {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-        terminal.draw(|frame| draw(frame, app)).unwrap();
-        let buffer = terminal.backend().buffer();
+        terminal.draw(|frame| draw(frame, app, theme)).unwrap();
+        terminal.backend().buffer().clone()
+    }
+
+    fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let buffer = render(app, &Theme::mocha(ColorDepth::TrueColor), width, height);
         (0..height)
             .map(|y| {
                 let row: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
                 row.trim_end().to_string()
             })
             .collect()
+    }
+
+    /// Every cell of the screen.
+    fn cells(buffer: &Buffer) -> impl Iterator<Item = &ratatui::buffer::Cell> {
+        buffer.content.iter()
     }
 
     fn sample() -> App {
@@ -401,7 +472,7 @@ mod tests {
         let rows = screen(&mut app, 100, 10);
         // A map that fits is centred vertically, one column in from the left.
         assert_eq!(rows[3], " Root ─┼─ B", "{rows:#?}");
-        assert_eq!(rows[7], " ideas.md  Root", "{rows:#?}");
+        assert_eq!(rows[7], " MAP  ideas.md  Root", "{rows:#?}");
         let hints = rows[8..].join("\n");
         for expected in [
             "hjkl move",
@@ -424,6 +495,7 @@ mod tests {
             ratatui::crossterm::event::KeyCode::Tab,
         ));
         let rows = screen(&mut app, 100, 10);
+        assert!(rows[8].starts_with(" EDIT  ideas.md * "), "{rows:#?}");
         let hints = &rows[9];
         assert!(hints.contains("Enter done"), "{hints}");
         assert!(hints.contains("Esc cancel"), "{hints}");
@@ -489,5 +561,57 @@ mod tests {
     #[test]
     fn long_breadcrumbs_keep_their_end() {
         assert_eq!(keep_end("Root › A › A1", 6), "… › A1");
+    }
+
+    #[test]
+    fn each_branch_draws_in_its_own_accent() {
+        let theme = Theme::mocha(ColorDepth::TrueColor);
+        let buffer = render(&mut sample(), &theme, 100, 10);
+        // The map is centred: A, B and C sit at column 10, rows 2 to 4, and
+        // their stubs at column 8.
+        for (i, row) in [2, 3, 4].into_iter().enumerate() {
+            let branch = theme.branch(Some(i));
+            assert_eq!(Some(buffer[(10, row)].fg), branch.label.fg, "label {i}");
+            assert_eq!(Some(buffer[(8, row)].fg), branch.line.fg, "stub {i}");
+        }
+        assert_ne!(buffer[(10, 2)].fg, buffer[(10, 3)].fg);
+        let root = theme.branch(None);
+        assert_eq!(
+            Some(buffer[(1, 3)].bg),
+            root.selected.bg,
+            "the root is selected"
+        );
+        assert_eq!(Some(buffer[(7, 3)].fg), root.line.fg, "the shared junction");
+    }
+
+    #[test]
+    fn the_theme_paints_every_cell() {
+        let theme = Theme::mocha(ColorDepth::TrueColor);
+        let mut app = sample();
+        app.selected = vec![1];
+        let buffer = render(&mut app, &theme, 100, 10);
+        assert!(cells(&buffer).all(|c| c.bg != Color::Reset && c.fg != Color::Reset));
+    }
+
+    #[test]
+    fn messages_take_the_colour_of_their_tone() {
+        let theme = Theme::mocha(ColorDepth::TrueColor);
+        let mut app = sample();
+        app.say(Tone::Error, "boom");
+        let buffer = render(&mut app, &theme, 100, 10);
+        let row = 7;
+        let x = (0..100)
+            .find(|&x| buffer[(x, row)].symbol() == "b")
+            .unwrap();
+        assert_eq!(Some(buffer[(x, row)].fg), theme.tone(Tone::Error).fg);
+    }
+
+    #[test]
+    fn without_colour_the_selection_is_reversed() {
+        let mut app = sample();
+        let buffer = render(&mut app, &Theme::mocha(ColorDepth::Mono), 100, 10);
+        assert!(cells(&buffer).all(|c| c.fg == Color::Reset && c.bg == Color::Reset));
+        assert!(buffer[(1, 3)].modifier.contains(Modifier::REVERSED));
+        assert!(!buffer[(10, 2)].modifier.contains(Modifier::REVERSED));
     }
 }

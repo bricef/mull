@@ -6,5 +6,6 @@ pub mod edit;
 pub mod keymap;
 pub mod layout;
 pub mod markdown;
+pub mod theme;
 pub mod tree;
 pub mod ui;

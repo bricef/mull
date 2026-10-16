@@ -70,6 +70,25 @@ Movement is visual: `j`/`k` go to the next topic *at the same depth* on
 screen, crossing between parents; `l` goes to the child nearest the
 current row.
 
+## Colour
+
+`src/theme.rs` is the only place a colour is named. The UI asks for a style
+by role (`theme.branch(i).line`, `theme.mode(context).key`,
+`theme.tone(tone)`), so changing the look, or adding a theme, touches one
+file. The palette is Catppuccin Mocha.
+
+Colour follows structure: the layout tags each connector with the
+first-level branch it belongs to, and that branch's accent colours its
+lines, its first-level topic and its selection highlight. The root's own
+junction is neutral, a shared trunk. Topics below the first level stay in
+plain text so the accents don't shout.
+
+Every role sets both foreground and background, so nothing depends on the
+terminal's own colours, and a test holds each role to WCAG contrast: 4.5:1
+for text, 3:1 for lines. Depth comes from the environment: `COLORTERM`
+means 24-bit, otherwise the nearest xterm-256 colour, and `NO_COLOR` (or
+`TERM=dumb`) gets a theme made of bold, underline and reverse video alone.
+
 ## Testing
 
 - Example tests for each module, with hand-written expected output.
@@ -98,3 +117,5 @@ current row.
 6. **Search** (`/`, `n`, `N`), **export** (HTML via Markmap, PNG), and
    **mouse** support are the obvious next features.
 7. **Licence.** None chosen yet.
+8. **More themes.** A light palette (Catppuccin Latte) for light terminals,
+   chosen with a `--theme` flag or a config file.

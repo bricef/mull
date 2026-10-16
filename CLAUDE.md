@@ -9,6 +9,8 @@ Terminal mind mapper (Rust, ratatui 0.30). Maps are Markdown files.
   (`HINTS`), help screen, `--keys` and README all derive from it. After
   changing a binding, replace the README key tables with `just keys`
   output (a test enforces this).
+- Colours are named only in `src/theme.rs`; the UI asks for styles by
+  role. Add any new role to `Theme::roles()` so the contrast test covers it.
 - The Markdown round-trip, layout and session invariants are property
   tests in `tests/properties.rs`; keep them passing rather than narrowing
   the generators.

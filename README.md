@@ -36,6 +36,18 @@ Start with `Tab` to add a child and `Enter` to add a sibling; both drop you
 straight into typing. `Enter` keeps the text, `Esc` throws it away. `s`
 saves, `q` quits, `?` shows every key.
 
+## Colour
+
+mull is drawn in [Catppuccin Mocha](https://catppuccin.com/palette). Each
+first-level topic and everything under it gets its own accent, like the
+branches of a hand-drawn mind map. The status line names the mode (MAP, EDIT,
+HELP) in that mode's colour, and messages are coloured by what they mean:
+green for saved, yellow for a key that did nothing, red for a failure.
+
+It uses 24-bit colour when the terminal sets `COLORTERM=truecolor`, the
+nearest of the standard 256 colours otherwise, and only bold and reverse video
+when [`NO_COLOR`](https://no-color.org) is set.
+
 ## The file format
 
 mull writes the root as a heading and everything else as a nested list:

@@ -59,6 +59,9 @@ pub struct Connector {
     pub x: usize,
     pub y: usize,
     pub ch: char,
+    /// The first-level topic whose branch this is part of, by index; `None`
+    /// for the root's own junction, which all branches share.
+    pub branch: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -142,21 +145,30 @@ impl Placer<'_> {
         let row = (first + last) / 2;
         self.out.nodes[index].y = row;
         let junction = x + label_width + 2;
+        let branch = path.first().copied();
         self.out.connectors.push(Connector {
             x: junction - 1,
             y: row,
             ch: '─',
+            branch,
         });
-        let mut child_rows = rows.iter().peekable();
+        let mut children = rows.iter().enumerate().peekable();
         for y in first..=last {
-            let to_child = child_rows.next_if_eq(&&y).is_some();
-            let ch = junction_char(y > first, y < last, y == row, to_child);
-            self.out.connectors.push(Connector { x: junction, y, ch });
-            if to_child {
+            let child = children.next_if(|&(_, &r)| r == y).map(|(i, _)| i);
+            let ch = junction_char(y > first, y < last, y == row, child.is_some());
+            self.out.connectors.push(Connector {
+                x: junction,
+                y,
+                ch,
+                branch,
+            });
+            if let Some(i) = child {
+                // From the root, each stub starts the branch it leads to.
                 self.out.connectors.push(Connector {
                     x: junction + 1,
                     y,
                     ch: '─',
+                    branch: branch.or(Some(i)),
                 });
             }
         }
@@ -318,6 +330,28 @@ mod tests {
         let map = layout(&tree, &Options::default(), None);
         assert_eq!(map.node(&[0]).map(|n| n.x), Some(9));
         assert_eq!(map.to_text(), "漢字 ─── a\n");
+    }
+
+    #[test]
+    fn connectors_know_their_branch() {
+        let map = layout(&sample(), &Options::default(), None);
+        let at = |x: usize, y: usize| {
+            map.connectors
+                .iter()
+                .find(|c| (c.x, c.y) == (x, y))
+                .map(|c| (c.ch, c.branch))
+        };
+        assert_eq!(at(6, 1), Some(('┤', None)), "the root's junction is shared");
+        assert_eq!(
+            at(7, 2),
+            Some(('─', Some(1))),
+            "the stub to B starts B's branch"
+        );
+        assert_eq!(
+            at(12, 1),
+            Some(('└', Some(0))),
+            "A's junction is in A's branch"
+        );
     }
 
     #[test]

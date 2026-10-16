@@ -2,7 +2,7 @@ use std::{io, path::PathBuf};
 
 use anyhow::Context as _;
 use clap::Parser;
-use mull::{app::App, keymap, ui};
+use mull::{app::App, keymap, theme::Theme, ui};
 use ratatui::crossterm::event;
 
 /// A keyboard-driven mind mapper for the terminal. Maps are plain Markdown
@@ -40,9 +40,10 @@ fn main() -> anyhow::Result<()> {
         print!("{}", app.layout().to_text());
         return Ok(());
     }
+    let theme = Theme::detect();
     ratatui::run(|terminal| -> io::Result<()> {
         while !app.should_quit {
-            terminal.draw(|frame| ui::draw(frame, &mut app))?;
+            terminal.draw(|frame| ui::draw(frame, &mut app, &theme))?;
             if let Some(key) = event::read()?.as_key_press_event() {
                 app.handle_key(key);
             }

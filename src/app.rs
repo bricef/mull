@@ -29,6 +29,26 @@ pub enum Mode {
     Help { scroll: usize },
 }
 
+/// What kind of news a status message is, which decides its colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    /// Something happened as asked: a cut, a copy.
+    Info,
+    /// The file is safe: saved.
+    Success,
+    /// The key did nothing, or there's something to know first.
+    Warning,
+    /// Something failed.
+    Error,
+}
+
+/// A line for the status bar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Message {
+    pub tone: Tone,
+    pub text: String,
+}
+
 /// A state to come back to with undo or redo.
 struct Snapshot {
     tree: Node,
@@ -45,7 +65,7 @@ pub struct App {
     pub file: PathBuf,
     pub options: Options,
     /// Shown in the status line until the next key press.
-    pub message: Option<String>,
+    pub message: Option<Message>,
     pub should_quit: bool,
     /// The map coordinates at the top left of the screen. The UI moves it
     /// to keep the selection in view.
@@ -87,21 +107,29 @@ impl App {
             Ok(text) => {
                 let mut app = App::new(markdown::parse(&text, &name), file.to_path_buf());
                 if app.saved != text {
-                    app.message =
-                        Some("Saving will rewrite this file in mull's Markdown layout".into());
+                    app.say(
+                        Tone::Warning,
+                        "Saving will rewrite this file in mull's Markdown layout",
+                    );
                 }
                 Ok(app)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 let mut app = App::new(Node::new(&name), file.to_path_buf());
-                app.message = Some(format!(
-                    "New map: {} is created when you save",
-                    file.display()
-                ));
+                let text = format!("New map: {} is created when you save", file.display());
+                app.say(Tone::Info, text);
                 Ok(app)
             }
             Err(e) => Err(e),
         }
+    }
+
+    /// Show `text` in the status line until the next key press.
+    pub fn say(&mut self, tone: Tone, text: impl Into<String>) {
+        self.message = Some(Message {
+            tone,
+            text: text.into(),
+        });
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -119,6 +147,7 @@ impl App {
     }
 
     /// The topics from the root down to the selection: `Root › A › A1`.
+    /// While typing, the selection's part is the text as typed so far.
     pub fn breadcrumb(&self) -> String {
         let mut node = &self.tree;
         let mut parts = vec![node.text.as_str()];
@@ -130,6 +159,9 @@ impl App {
                 }
                 None => break,
             }
+        }
+        if let (Mode::Edit { editor, .. }, Some(last)) = (&self.mode, parts.last_mut()) {
+            *last = editor.text();
         }
         parts.join(" › ")
     }
@@ -313,13 +345,13 @@ impl App {
                 self.record(before);
                 self.selected = path;
             }
-            None => self.message = Some(refusal.to_string()),
+            None => self.say(Tone::Warning, refusal),
         }
     }
 
     fn cut(&mut self) {
         let Some((&index, parent)) = self.selected.split_last() else {
-            self.message = Some("The root can't be cut".into());
+            self.say(Tone::Warning, "The root can't be cut");
             return;
         };
         let parent = parent.to_vec();
@@ -336,20 +368,20 @@ impl App {
         } else {
             parent
         };
-        self.message = Some(format!("Cut {}", describe(&node)));
+        self.say(Tone::Info, format!("Cut {}", describe(&node)));
         self.clipboard = Some(node);
     }
 
     fn copy(&mut self) {
-        if let Some(node) = self.tree.get(&self.selected) {
-            self.message = Some(format!("Copied {}", describe(node)));
-            self.clipboard = Some(node.clone());
+        if let Some(node) = self.tree.get(&self.selected).cloned() {
+            self.say(Tone::Info, format!("Copied {}", describe(&node)));
+            self.clipboard = Some(node);
         }
     }
 
     fn paste(&mut self) {
         let Some(node) = self.clipboard.clone() else {
-            self.message = Some("Nothing to paste: cut or copy a topic first".into());
+            self.say(Tone::Warning, "Nothing to paste: cut or copy a topic first");
             return;
         };
         let before = self.snapshot();
@@ -367,7 +399,7 @@ impl App {
     fn toggle_fold(&mut self) {
         match self.tree.get_mut(&self.selected) {
             Some(node) if !node.children.is_empty() => node.collapsed = !node.collapsed,
-            _ => self.message = Some("Nothing to fold".into()),
+            _ => self.say(Tone::Warning, "Nothing to fold"),
         }
     }
 
@@ -377,7 +409,7 @@ impl App {
                 self.redo.push(self.snapshot());
                 self.restore(snapshot);
             }
-            None => self.message = Some("Nothing to undo".into()),
+            None => self.say(Tone::Warning, "Nothing to undo"),
         }
     }
 
@@ -387,7 +419,7 @@ impl App {
                 self.undo.push(self.snapshot());
                 self.restore(snapshot);
             }
-            None => self.message = Some("Nothing to redo".into()),
+            None => self.say(Tone::Warning, "Nothing to redo"),
         }
     }
 
@@ -464,16 +496,22 @@ impl App {
     }
 
     fn save_and_report(&mut self) {
-        self.message = Some(match self.save() {
-            Ok(()) => format!("Saved {}", self.file.display()),
-            Err(e) => format!("Couldn't save {}: {e}", self.file.display()),
-        });
+        match self.save() {
+            Ok(()) => self.say(Tone::Success, format!("Saved {}", self.file.display())),
+            Err(e) => self.say(
+                Tone::Error,
+                format!("Couldn't save {}: {e}", self.file.display()),
+            ),
+        }
     }
 
     fn quit(&mut self, confirmed: bool) {
         if self.is_dirty() && !confirmed {
             self.quit_armed = true;
-            self.message = Some("Unsaved changes: s saves, q again quits without saving".into());
+            self.say(
+                Tone::Warning,
+                "Unsaved changes: s saves, q again quits without saving",
+            );
         } else {
             self.should_quit = true;
         }
@@ -615,7 +653,7 @@ mod tests {
         let mut app = app(sample());
         keys(&mut app, "d");
         assert_eq!(app.tree, sample());
-        assert!(app.message.is_some());
+        assert_eq!(app.message.map(|m| m.tone), Some(Tone::Warning));
     }
 
     #[test]
@@ -659,5 +697,12 @@ mod tests {
         let mut app = app(sample());
         app.selected = vec![1, 0];
         assert_eq!(app.breadcrumb(), "Root › B › B1");
+        press(&mut app, KeyCode::Tab);
+        keys(&mut app, "new");
+        assert_eq!(
+            app.breadcrumb(),
+            "Root › B › B1 › new",
+            "shows what's typed"
+        );
     }
 }
