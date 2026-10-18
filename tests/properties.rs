@@ -6,36 +6,220 @@ use mull::{
     app::{App, Mode},
     layout::{self, Options},
     markdown,
-    tree::{Node, normalize_text},
+    tree::{BlockKind, ItemStyle, Kind, Marker, Node, normalize_text},
 };
 use proptest::{prelude::*, sample::Index};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-fn text() -> impl Strategy<Value = String> {
-    prop_oneof![
-        "[a-z]{1,6}",
-        // Characters that could be mistaken for Markdown structure.
-        "[ #*+\\-.)0-9a-z\\[\\]`]{0,12}",
-        "\\PC{0,8}",
-    ]
-    .prop_map(|s| normalize_text(&s))
-}
+/// The name a document root reads back with.
+const NAME: &str = "doc";
 
-fn tree() -> impl Strategy<Value = Node> {
-    let leaf = text().prop_map(|t| Node::new(&t));
-    leaf.prop_recursive(4, 48, 5, |inner| {
-        (text(), prop::collection::vec(inner, 0..5))
-            .prop_map(|(t, children)| Node::with_children(&t, children))
+fn raw_text() -> impl Strategy<Value = String> {
+    prop_oneof![
+        3 => "[a-z]{1,6}( [a-z]{1,6}){0,2}",
+        // Characters that could be mistaken for Markdown structure.
+        2 => "[ #*+\\-.)0-9a-z\\[\\]`>!_<$|]{1,12}",
+        1 => "\\PC{1,8}",
+    ]
+    .prop_map(|s| {
+        let text = normalize_text(&s);
+        if text.is_empty() {
+            "x".to_string()
+        } else {
+            text
+        }
     })
 }
 
-/// Text shaped like Markdown: headings, bullets, numbers, indentation.
+/// Text as a user would leave it after typing it into a topic of `kind`.
+fn typed(kind: Kind) -> impl Strategy<Value = String> {
+    raw_text().prop_map(move |t| markdown::safe_text(&kind, &t))
+}
+
+/// Blocks that read back as themselves at the top level and inside items.
+const BLOCKS: &[(BlockKind, &str)] = &[
+    (
+        BlockKind::Code,
+        "```rust\nfn main() {\n    println!(\"hi\");\n}\n```",
+    ),
+    (BlockKind::Code, "~~~\n# not a heading\n- not an item\n~~~"),
+    (BlockKind::Table, "| a | b |\n|---|---|\n| 1 | 2 |"),
+    (BlockKind::Quote, "> quoted\n> > nested"),
+    (BlockKind::Html, "<div>\n<b>raw</b>\n</div>"),
+    (BlockKind::Maths, "$$\nx^2\n$$"),
+    (BlockKind::Definition, "[ref]: https://example.com"),
+    (BlockKind::Rule, "***"),
+];
+
+fn block() -> impl Strategy<Value = Node> {
+    prop_oneof![
+        prop::sample::select(BLOCKS).prop_map(|(kind, source)| Node::block(kind, source)),
+        "[a-z]{1,8}( [a-z]{1,8}){0,4}(\n[a-z]{1,8}( [a-z]{1,8}){0,3})?"
+            .prop_map(|s| Node::block(BlockKind::Paragraph, &s)),
+    ]
+}
+
+fn marker() -> impl Strategy<Value = Marker> {
+    prop_oneof![
+        prop::sample::select(vec!['-', '*', '+']).prop_map(Marker::Bullet),
+        (0u32..12, prop::sample::select(vec!['.', ')']))
+            .prop_map(|(number, delimiter)| Marker::Ordered { number, delimiter }),
+    ]
+}
+
+/// One list: items sharing a marker, each perhaps a task, perhaps holding
+/// more.
+fn list(depth: u32) -> BoxedStrategy<Vec<Node>> {
+    let item = (
+        raw_text(),
+        "[a-z]{1,6}",
+        prop::option::of(any::<bool>()),
+        content(depth),
+    );
+    (marker(), any::<bool>(), prop::collection::vec(item, 1..4))
+        .prop_map(|(marker, loose, items)| {
+            items
+                .into_iter()
+                .map(|(text, task_text, checked, children)| {
+                    let style = ItemStyle {
+                        marker,
+                        checked,
+                        loose,
+                    };
+                    // A task's text follows its box, so keep it plain.
+                    let text = match checked {
+                        Some(_) => task_text,
+                        None => markdown::safe_text(&Kind::Item(style), &text),
+                    };
+                    Node::item(style, &text).with(children)
+                })
+                .collect()
+        })
+        .boxed()
+}
+
+/// What an item or a section holds before any sub-sections: lists and
+/// blocks.
+fn content(depth: u32) -> BoxedStrategy<Vec<Node>> {
+    if depth == 0 {
+        return Just(Vec::new()).boxed();
+    }
+    let part = prop_oneof![block().prop_map(|b| vec![b]), list(depth - 1)];
+    prop::collection::vec(part, 0..3)
+        .prop_map(|parts| parts.concat())
+        .boxed()
+}
+
+fn section(level: u8, depth: u32) -> BoxedStrategy<Node> {
+    let subsections = if level < 6 && depth > 0 {
+        prop::collection::vec(section(level + 1, depth - 1), 0..3).boxed()
+    } else {
+        Just(Vec::new()).boxed()
+    };
+    (typed(Kind::Heading { level }), content(depth), subsections)
+        .prop_map(move |(text, mut children, subsections)| {
+            children.extend(subsections);
+            Node::heading(level, &text).with(children)
+        })
+        .boxed()
+}
+
+/// A well-formed map, as markdown::parse would give it.
+fn map() -> impl Strategy<Value = Node> {
+    let document = (
+        any::<bool>(),
+        content(2),
+        prop::collection::vec(section(1, 2), 0..3),
+    )
+        .prop_filter_map(
+            "a document that reads back as a document",
+            |(front, content, sections)| {
+                let mut children = Vec::new();
+                if front {
+                    children.push(Node::block(BlockKind::FrontMatter, "---\ntitle: x\n---"));
+                }
+                children.extend(content);
+                children.extend(sections);
+                let one_heading = children.len() == 1 && children[0].is_heading();
+                (!children.is_empty() && !one_heading).then(|| Node::document(NAME).with(children))
+            },
+        );
+    prop_oneof![section(1, 3), document].prop_map(|mut tree| {
+        tidy(&mut tree);
+        tree
+    })
+}
+
+/// Make a tree's lists look the way they read back: one list per run of
+/// items with the same marker, numbered from its first item, loose all
+/// through or not at all.
+fn tidy(node: &mut Node) {
+    let mut i = 0;
+    while i < node.children.len() {
+        let Kind::Item(first) = node.children[i].kind else {
+            i += 1;
+            continue;
+        };
+        let end = node.children[i..]
+            .iter()
+            .position(|n| !matches!(n.kind, Kind::Item(s) if s.marker.same_list(first.marker)))
+            .map_or(node.children.len(), |n| i + n);
+        let run = &node.children[i..end];
+        let loose = (run
+            .iter()
+            .any(|n| matches!(n.kind, Kind::Item(s) if s.loose))
+            || run.iter().any(markdown::needs_gap))
+            && (run.len() > 1 || run.iter().any(|n| !n.children.is_empty()));
+        for (n, item) in node.children[i..end].iter_mut().enumerate() {
+            if let Kind::Item(style) = &mut item.kind {
+                style.loose = loose;
+                if let (Marker::Ordered { number, .. }, Marker::Ordered { number: start, .. }) =
+                    (&mut style.marker, first.marker)
+                {
+                    *number = start + n as u32;
+                }
+            }
+        }
+        i = end;
+    }
+    for child in &mut node.children {
+        tidy(child);
+    }
+}
+
+/// The tree with every list marked tight, so that only what the writer
+/// itself requires makes a list loose.
+fn tightened(node: &Node) -> Node {
+    let mut node = node.clone();
+    if let Kind::Item(style) = &mut node.kind {
+        style.loose = false;
+    }
+    node.children = node.children.iter().map(tightened).collect();
+    node
+}
+
+/// Text shaped like Markdown: headings, lists, fences, quotes, tables,
+/// indentation, and anything at all.
 fn document() -> impl Strategy<Value = String> {
     let line = prop_oneof![
-        "[ \t]{0,6}([-*+]|#{1,7}|[0-9]{1,2}[.)])?[ \t]?[a-z#é ]{0,8}",
+        "[ \t]{0,6}([-*+>]|#{1,7}|[0-9]{1,2}[.)]|```|~~~|\\|)?[ \t]?[a-z#é |-]{0,8}",
+        Just("---".to_string()),
+        Just(String::new()),
         any::<String>(),
     ];
-    prop::collection::vec(line, 0..15).prop_map(|lines| lines.join("\n"))
+    prop::collection::vec(line, 0..20).prop_map(|lines| lines.join("\n"))
+}
+
+/// The words of a text, sorted: whatever moves or changes markup, these
+/// stay.
+fn words(text: &str) -> Vec<String> {
+    let mut words: Vec<String> = text
+        .split_whitespace()
+        .filter(|w| w.chars().any(char::is_alphabetic))
+        .map(str::to_lowercase)
+        .collect();
+    words.sort();
+    words
 }
 
 fn preorder<'a>(node: &'a Node, out: &mut Vec<&'a Node>) {
@@ -75,9 +259,10 @@ fn plain(c: char) -> KeyEvent {
     KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
 }
 
-/// Every key except the ones that save or quit.
+/// Every key except the ones that save or quit, and some text that needs
+/// escaping.
 fn key() -> impl Strategy<Value = KeyEvent> {
-    let mut keys: Vec<KeyEvent> = "hjklgecdyp JKHLuU?x漢".chars().map(plain).collect();
+    let mut keys: Vec<KeyEvent> = "hjklgecdyp JKHLuU?x漢#-[] 1.".chars().map(plain).collect();
     keys.extend([
         KeyEvent::new(KeyCode::Char('r'), KeyModifiers::CONTROL),
         KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL),
@@ -94,29 +279,38 @@ fn key() -> impl Strategy<Value = KeyEvent> {
 
 proptest! {
     #[test]
-    fn saving_then_reading_gives_back_the_same_map(tree in tree()) {
+    fn saving_then_reading_gives_back_the_same_map(tree in map()) {
         let text = markdown::serialize(&tree);
-        prop_assert_eq!(markdown::parse(&text, "fallback"), tree);
+        prop_assert_eq!(markdown::parse(&text, NAME), tree, "written as:\n{}", text);
     }
 
     #[test]
-    fn any_document_settles_into_one_layout(input in document()) {
-        let once = markdown::serialize(&markdown::parse(&input, "root"));
-        let twice = markdown::serialize(&markdown::parse(&once, "root"));
+    fn typed_text_always_reads_back(text in raw_text(), heading in any::<bool>()) {
+        let kind = if heading { Kind::Heading { level: 1 } } else { Kind::default() };
+        let safe = markdown::safe_text(&kind, &text);
+        prop_assert!(markdown::reads_back(&kind, &safe), "{:?} became {:?}", text, safe);
+        prop_assert_eq!(markdown::safe_text(&kind, &safe), safe.clone(), "escaping twice changes it");
+    }
+
+    #[test]
+    fn any_document_settles_after_one_save(input in document()) {
+        let once = markdown::serialize(&markdown::parse(&input, NAME));
+        let twice = markdown::serialize(&markdown::parse(&once, NAME));
         prop_assert_eq!(once, twice);
     }
 
     #[test]
-    fn every_non_blank_line_becomes_one_topic(input in document()) {
-        let tree = markdown::parse(&input, "root");
-        let lines = input.lines().filter(|l| !l.trim().is_empty()).count();
-        // Plus one when the lines needed a root to share.
-        prop_assert!(tree.size() == lines || (tree.size() == lines + 1 && tree.text == "root"));
+    fn saving_neither_loses_nor_invents_words(input in document()) {
+        let saved = markdown::serialize(&markdown::parse(&input, NAME));
+        // A file with no words at all may gain the map's name as a title.
+        if input.chars().any(char::is_alphabetic) {
+            prop_assert_eq!(words(&input), words(&saved), "saved as:\n{}", saved);
+        }
     }
 
     #[test]
     fn layout_shows_each_visible_topic_once_without_overlaps(
-        mut tree in tree(),
+        mut tree in map(),
         folds in prop::collection::vec(any::<bool>(), 0..64),
         max_width in 2usize..30,
     ) {
@@ -162,7 +356,7 @@ proptest! {
 
     #[test]
     fn restructuring_moves_whole_subtrees_and_loses_nothing(
-        mut tree in tree(),
+        mut tree in map(),
         moves in prop::collection::vec((0..4usize, any::<Index>()), 0..30),
     ) {
         let texts = sorted_texts(&tree);
@@ -186,22 +380,32 @@ proptest! {
     }
 
     #[test]
-    fn random_sessions_stay_consistent_and_undo_completely(
-        start in tree(),
+    fn random_sessions_keep_the_map_writable_and_undo_completely(
+        start in map(),
         keys in prop::collection::vec(key(), 0..80),
     ) {
         let mut app = App::new(start.clone(), PathBuf::from("unused.md"));
         for key in keys {
             app.handle_key(key);
             prop_assert!(app.tree.is_visible(&app.selected), "selection {:?} isn't on screen", app.selected);
+            prop_assert_eq!(app.tree.check(), Ok(()), "{:#?}", app.tree);
             let mut nodes = Vec::new();
             preorder(&app.tree, &mut nodes);
-            prop_assert!(nodes.iter().all(|n| n.text == normalize_text(&n.text)));
+            prop_assert!(nodes.iter().filter(|n| !n.is_block()).all(|n| n.text == normalize_text(&n.text)));
             prop_assert!(!app.should_quit);
         }
         // Leave whatever mode the keys ended in.
         app.handle_key(KeyEvent::from(KeyCode::Esc));
         prop_assert!(matches!(app.mode, Mode::Map));
+
+        // What would be saved reads back as the same map, then settles. Only
+        // list looseness may change on the way: markdown-rs marks an item
+        // loose when a sub-list ends in an empty item and a blank line.
+        let saved = markdown::serialize(&app.tree);
+        let reloaded = markdown::parse(&saved, NAME);
+        prop_assert_eq!(markdown::serialize(&tightened(&reloaded)), markdown::serialize(&tightened(&app.tree)));
+        let resaved = markdown::serialize(&reloaded);
+        prop_assert_eq!(markdown::serialize(&markdown::parse(&resaved, NAME)), resaved);
 
         // The session may itself end on an undo, so go forward to the
         // newest state first; redo-everything must come back to exactly it.

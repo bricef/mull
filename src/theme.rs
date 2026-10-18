@@ -141,6 +141,9 @@ pub struct Theme {
     pub canvas: Style,
     /// Topics below the first level.
     pub topic: Style,
+    /// Content blocks: quieter than topics, since mull moves them but
+    /// doesn't edit them.
+    pub block: Style,
     /// The topic being typed.
     pub editing: Style,
     root: Branch,
@@ -205,6 +208,7 @@ impl Theme {
         Theme {
             canvas: on(TEXT, BASE),
             topic: on(TEXT, BASE),
+            block: on(SUBTEXT0, BASE).add_modifier(Modifier::ITALIC),
             editing: on(TEXT, SURFACE1),
             root: Branch {
                 label: bold(on(LAVENDER, BASE)),
@@ -251,6 +255,7 @@ impl Theme {
         Theme {
             canvas: plain,
             topic: plain,
+            block: plain.add_modifier(Modifier::ITALIC),
             editing: plain.add_modifier(Modifier::UNDERLINED),
             root: branch,
             branches: vec![branch],
@@ -314,6 +319,7 @@ impl Theme {
         let mut roles = vec![
             ("canvas".to_string(), self.canvas, Text),
             ("topic".to_string(), self.topic, Text),
+            ("block".to_string(), self.block, Text),
             ("editing".to_string(), self.editing, Text),
             ("bar".to_string(), self.bar, Text),
             ("file".to_string(), self.file, Text),

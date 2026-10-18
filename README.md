@@ -57,7 +57,7 @@ when [`NO_COLOR`](https://no-color.org) is set.
 
 ## The file format
 
-mull writes the root as a heading and everything else as a nested list:
+A new map is a heading with a list under it:
 
 ```markdown
 # Trip to Lisbon
@@ -70,22 +70,32 @@ mull writes the root as a heading and everything else as a nested list:
 
 That's the layout [Markmap](https://markmap.js.org) draws as a mind map too.
 
-It reads more than it writes, so existing notes open as maps:
+Any Markdown file opens as a map. mull reads it with a real CommonMark
+parser ([markdown-rs](https://github.com/wooorm/markdown-rs), with GitHub's
+extensions, front matter and maths):
 
-- Headings nest by level, and lists and paragraphs nest under the heading
-  above them.
-- Indentation nests list items, and plain indented lines (h-m-m's
-  tab-indented files, say) nest the same way.
-- List markers (`-`, `*`, `+`, `1.`) are dropped from the topic text. Other
-  inline Markdown (`**bold**`, `[links](…)`) is kept as typed.
-- A file with several top-level topics gets a root named after the file.
+- **Headings are sections:** everything after a heading sits under it, up
+  to the next heading of the same or a higher level.
+- **List items are topics,** nested as the lists are.
+- **Everything else is content:** paragraphs, code, tables, quotes, HTML,
+  maths, front matter, and link and footnote definitions each become one
+  leaf on the map, shown in a quieter style with its first line.
 
-Every non-blank line becomes one topic, so opening and saving never loses
-text. Saving does rewrite the file in the layout above, and mull says so
-when you open a file that will change shape. Saves are atomic, go through
-symlinks, and keep the file's permissions.
+You type into headings and list items. Content blocks can be moved, cut,
+copied and pasted, but mull doesn't edit them: that's what a Markdown editor
+is for.
 
-Folds are view state and aren't saved.
+Saving writes each node back as what it is: headings as headings, list items
+with their own markers, numbers and task boxes, and content blocks exactly
+as they were. A file renders the same before and after mull saves it. What
+can change is layout that doesn't affect rendering: blank lines, underlined
+headings (written with `#`), indented code (written fenced), and list
+numbering. mull says so when you open a file it would reformat.
+
+Some trees can't be written as Markdown and read back the same, such as
+content after a sub-section, or a section inside a list item. mull refuses
+those moves and says why. Saves are atomic, go through symlinks, and keep
+the file's permissions. Folds are view state and aren't saved.
 
 ## Keys
 

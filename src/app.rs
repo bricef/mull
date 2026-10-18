@@ -15,7 +15,7 @@ use crate::{
     keymap::{self, Action, Context},
     layout::{self, Layout, Options},
     markdown,
-    tree::{Node, Path, child_path, normalize_text},
+    tree::{ItemStyle, Kind, Node, Path, child_path, normalize_text},
 };
 
 pub enum Mode {
@@ -106,7 +106,12 @@ impl App {
         match fs::read_to_string(file) {
             Ok(text) => {
                 let mut app = App::new(markdown::parse(&text, &name), file.to_path_buf());
-                if app.saved != text {
+                if !markdown::readable(&text) {
+                    app.say(
+                        Tone::Warning,
+                        "The Markdown parser can't read this file, so it's kept as one block",
+                    );
+                } else if app.saved != text {
                     app.say(
                         Tone::Warning,
                         "Saving will rewrite this file in mull's Markdown layout",
@@ -115,7 +120,7 @@ impl App {
                 Ok(app)
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let mut app = App::new(Node::new(&name), file.to_path_buf());
+                let mut app = App::new(Node::heading(1, &name), file.to_path_buf());
                 let text = format!("New map: {} is created when you save", file.display());
                 app.say(Tone::Info, text);
                 Ok(app)
@@ -150,18 +155,18 @@ impl App {
     /// While typing, the selection's part is the text as typed so far.
     pub fn breadcrumb(&self) -> String {
         let mut node = &self.tree;
-        let mut parts = vec![node.text.as_str()];
+        let mut parts = vec![node.label()];
         for &i in &self.selected {
             match node.children.get(i) {
                 Some(child) => {
                     node = child;
-                    parts.push(&child.text);
+                    parts.push(child.label());
                 }
                 None => break,
             }
         }
         if let (Mode::Edit { editor, .. }, Some(last)) = (&self.mode, parts.last_mut()) {
-            *last = editor.text();
+            *last = editor.text().to_string();
         }
         parts.join(" › ")
     }
@@ -309,29 +314,68 @@ impl App {
         self.redo.clear();
     }
 
+    /// Keep a change, selecting `selected`, if the tree can still be
+    /// written as Markdown and read back the same; otherwise put everything
+    /// back and say why. Returns whether the change was kept.
+    fn settle(&mut self, before: Snapshot, selected: Path) -> bool {
+        match self.tree.check() {
+            Ok(()) => {
+                self.record(before);
+                self.selected = selected;
+                true
+            }
+            Err(problem) => {
+                self.restore(before);
+                self.say(Tone::Warning, problem.to_string());
+                false
+            }
+        }
+    }
+
+    /// A new item goes in as a list item styled like the items around it.
     fn add_child(&mut self) {
         let before = self.snapshot();
-        let Some(parent) = self.tree.get_mut(&self.selected) else {
+        let parent_path = self.selected.clone();
+        let Some(parent) = self.tree.get_mut(&parent_path) else {
             return;
         };
         parent.collapsed = false;
-        parent.children.push(Node::default());
-        let index = parent.children.len() - 1;
-        self.record(before);
-        self.selected = child_path(&self.selected, index);
-        self.start_typing("", true);
+        let node = Node::item(fresh_style(parent), "");
+        if let Some(path) = self.tree.append(&parent_path, node)
+            && self.settle(before, path)
+        {
+            self.start_typing("", true);
+        }
     }
 
+    /// A new sibling of the same kind: a section after a section, an item
+    /// after an item, and an item after content.
     fn add_sibling(&mut self) {
         let Some((&index, parent)) = self.selected.split_last() else {
             // The root has no siblings; a child is the next best thing.
             return self.add_child();
         };
         let parent = parent.to_vec();
+        let (Some(current), Some(parent_node)) =
+            (self.tree.get(&self.selected), self.tree.get(&parent))
+        else {
+            return;
+        };
+        let node = match current.kind {
+            Kind::Heading { level } => Node::heading(level, ""),
+            Kind::Item(style) => Node::item(
+                ItemStyle {
+                    checked: style.checked.map(|_| false),
+                    ..style
+                },
+                "",
+            ),
+            _ => Node::item(fresh_style(parent_node), ""),
+        };
         let before = self.snapshot();
-        if let Some(path) = self.tree.insert(&parent, index + 1, Node::default()) {
-            self.record(before);
-            self.selected = path;
+        if let Some(path) = self.tree.insert(&parent, index + 1, node)
+            && self.settle(before, path)
+        {
             self.start_typing("", true);
         }
     }
@@ -342,8 +386,7 @@ impl App {
         let before = self.snapshot();
         match change(&mut self.tree, &self.selected) {
             Some(path) => {
-                self.record(before);
-                self.selected = path;
+                self.settle(before, path);
             }
             None => self.say(Tone::Warning, refusal),
         }
@@ -385,14 +428,13 @@ impl App {
             return;
         };
         let before = self.snapshot();
-        let Some(parent) = self.tree.get_mut(&self.selected) else {
-            return;
-        };
-        parent.collapsed = false;
-        parent.children.push(node);
-        let index = parent.children.len() - 1;
-        self.record(before);
-        self.selected = child_path(&self.selected, index);
+        let parent = self.selected.clone();
+        if let Some(parent_node) = self.tree.get_mut(&parent) {
+            parent_node.collapsed = false;
+        }
+        if let Some(path) = self.tree.append(&parent, node) {
+            self.settle(before, path);
+        }
     }
 
     /// Folding is view state: it isn't saved, so it isn't undone either.
@@ -432,12 +474,27 @@ impl App {
         };
     }
 
+    /// Topics can be typed into; content blocks only move, and the document
+    /// takes its name from its file.
     fn begin_edit(&mut self, replace: bool) {
-        let text = match self.tree.get(&self.selected) {
-            Some(node) if !replace => node.text.clone(),
-            _ => String::new(),
+        let Some(node) = self.tree.get(&self.selected) else {
+            return;
         };
-        self.start_typing(&text, false);
+        match node.kind {
+            Kind::Block(_) => self.say(
+                Tone::Warning,
+                "mull moves content blocks but doesn't edit them",
+            ),
+            Kind::Document => self.say(Tone::Warning, "The document is named after its file"),
+            Kind::Heading { .. } | Kind::Item(_) => {
+                let text = if replace {
+                    String::new()
+                } else {
+                    node.text.clone()
+                };
+                self.start_typing(&text, false);
+            }
+        }
     }
 
     fn with_editor(&mut self, change: impl FnOnce(&mut LineEditor)) {
@@ -460,18 +517,27 @@ impl App {
         let Mode::Edit { editor, new_topic } = mem::replace(&mut self.mode, Mode::Map) else {
             return;
         };
-        let text = normalize_text(editor.text());
-        if self.tree.get(&self.selected).is_none_or(|n| n.text == text) {
+        let Some(node) = self.tree.get(&self.selected) else {
+            return;
+        };
+        let (kind, text) = typed(&node.kind, editor.text());
+        if node.kind == kind && node.text == text {
             return;
         }
-        // A new topic's creation is already recorded; undoing it removes the
-        // topic, text and all.
-        let before = (!new_topic).then(|| self.snapshot());
+        let before = self.snapshot();
         if let Some(node) = self.tree.get_mut(&self.selected) {
+            node.kind = kind;
             node.text = text;
         }
-        if let Some(before) = before {
-            self.record(before);
+        match self.tree.check() {
+            // A new topic's creation is already recorded; undoing it removes
+            // the topic, text and all.
+            Ok(()) if new_topic => {}
+            Ok(()) => self.record(before),
+            Err(problem) => {
+                self.restore(before);
+                self.say(Tone::Warning, problem.to_string());
+            }
         }
     }
 
@@ -521,9 +587,44 @@ impl App {
 /// `“text”`, or `“text” and N more` for a topic with others under it.
 fn describe(node: &Node) -> String {
     match node.size() - 1 {
-        0 => format!("“{}”", node.text),
-        more => format!("“{}” and {more} more", node.text),
+        0 => format!("“{}”", node.label()),
+        more => format!("“{}” and {more} more", node.label()),
     }
+}
+
+/// The style for a new item under `parent`: like its other items, unticked
+/// if they're tasks, or a plain `-` item.
+fn fresh_style(parent: &Node) -> ItemStyle {
+    match parent.children.iter().rev().find_map(|n| match n.kind {
+        Kind::Item(style) => Some(style),
+        _ => None,
+    }) {
+        Some(style) => ItemStyle {
+            checked: style.checked.map(|_| false),
+            ..style
+        },
+        None => ItemStyle::default(),
+    }
+}
+
+/// What typing `typed` into a topic of `kind` makes. Starting an item with
+/// `[ ] ` or `[x] ` makes it a task; the text is escaped where it would
+/// otherwise read back as something else.
+fn typed(kind: &Kind, typed: &str) -> (Kind, String) {
+    let text = normalize_text(typed);
+    if let Kind::Item(style) = kind {
+        for (prefix, checked) in [("[ ] ", false), ("[x] ", true), ("[X] ", true)] {
+            if let Some(rest) = text.strip_prefix(prefix) {
+                let kind = Kind::Item(ItemStyle {
+                    checked: Some(checked),
+                    ..*style
+                });
+                let text = markdown::safe_text(&kind, rest);
+                return (kind, text);
+            }
+        }
+    }
+    (kind.clone(), markdown::safe_text(kind, &text))
 }
 
 /// Replace `file`'s contents without ever leaving it half-written: write a
@@ -547,6 +648,7 @@ fn write_file(file: &FilePath, text: &str) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tree::BlockKind;
     use pretty_assertions::assert_eq;
 
     fn press(app: &mut App, code: KeyCode) {
@@ -690,6 +792,75 @@ mod tests {
         let mut app = app(sample());
         keys(&mut app, "q");
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn blocks_move_but_are_not_edited() {
+        let tree = Node::heading(1, "Root").with(vec![
+            Node::block(BlockKind::Code, "```\ncode\n```"),
+            Node::new("item"),
+        ]);
+        let mut app = app(tree.clone());
+        keys(&mut app, "l");
+        assert_eq!(app.selected, vec![0]);
+        keys(&mut app, "e");
+        assert!(matches!(app.mode, Mode::Map), "no typing into a block");
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.tree, tree, "blocks hold no topics");
+        keys(&mut app, "J");
+        assert_eq!(
+            app.tree.children[1].kind,
+            Kind::Block(BlockKind::Code),
+            "but they move"
+        );
+    }
+
+    #[test]
+    fn content_stays_ahead_of_sub_sections() {
+        let tree = Node::heading(1, "Root").with(vec![Node::new("item"), Node::heading(2, "Part")]);
+        let mut app = app(tree.clone());
+        app.selected = vec![0];
+        keys(&mut app, "J");
+        assert_eq!(app.tree, tree);
+        assert_eq!(
+            app.message.as_ref().map(|m| m.text.as_str()),
+            Some("Content has to come before a section's sub-sections")
+        );
+        // A new child of the root lands with the content, not after Part.
+        app.selected = vec![];
+        press(&mut app, KeyCode::Tab);
+        assert_eq!(app.selected, vec![1]);
+    }
+
+    #[test]
+    fn enter_on_a_section_adds_a_section_and_brackets_make_tasks() {
+        let mut app = app(Node::heading(1, "Root").with(vec![Node::heading(2, "Part")]));
+        app.selected = vec![0];
+        press(&mut app, KeyCode::Enter);
+        keys(&mut app, "Next");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tree.children[1], Node::heading(2, "Next"));
+        press(&mut app, KeyCode::Tab);
+        keys(&mut app, "[ ] todo");
+        press(&mut app, KeyCode::Enter);
+        let task = &app.tree.children[1].children[0];
+        assert!(matches!(
+            task.kind,
+            Kind::Item(ItemStyle {
+                checked: Some(false),
+                ..
+            })
+        ));
+        assert_eq!(task.text, "todo");
+    }
+
+    #[test]
+    fn typed_text_is_escaped_where_it_would_change_meaning() {
+        let mut app = app(Node::heading(1, "Root"));
+        press(&mut app, KeyCode::Tab);
+        keys(&mut app, "# not a heading");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tree.children[0].text, "\\# not a heading");
     }
 
     #[test]

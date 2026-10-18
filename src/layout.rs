@@ -38,8 +38,9 @@ pub struct Placed {
     /// The text as shown, possibly cut short. Never empty, so an empty topic
     /// still has a cell to highlight.
     pub label: String,
-    /// `[+N]` after a folded topic: N topics are hidden under it.
-    pub fold_marker: Option<String>,
+    /// A quiet note after the label: `[+N]` on a folded topic hiding N
+    /// others, `[N lines]` on a block longer than its label.
+    pub note: Option<String>,
 }
 
 impl Placed {
@@ -49,7 +50,7 @@ impl Placed {
 
     /// Columns taken by the label and fold marker together.
     pub fn width(&self) -> usize {
-        self.label_width() + self.fold_marker.as_ref().map_or(0, |m| 1 + m.width())
+        self.label_width() + self.note.as_ref().map_or(0, |m| 1 + m.width())
     }
 }
 
@@ -109,7 +110,7 @@ impl Placer<'_> {
     fn place(&mut self, node: &Node, path: &mut Path, x: usize, top: usize) -> (usize, usize) {
         let label = match self.editing {
             Some((editing, text)) if editing == path.as_slice() => text.to_string(),
-            _ => truncate(&node.text, self.options.max_text_width),
+            _ => truncate(&node.label(), self.options.max_text_width),
         };
         let label = if label.is_empty() {
             " ".to_string()
@@ -124,7 +125,12 @@ impl Placer<'_> {
             x,
             y: top,
             label,
-            fold_marker: folded.then(|| format!("[+{}]", node.size() - 1)),
+            note: if folded {
+                Some(format!("[+{}]", node.size() - 1))
+            } else {
+                let lines = node.hidden_lines();
+                (lines > 0).then(|| format!("[{} lines]", lines + 1))
+            },
         });
         if node.children.is_empty() || node.collapsed {
             return (top, 1);
@@ -244,7 +250,7 @@ impl Layout {
         }
         for n in &self.nodes {
             put(n.x, n.y, &n.label);
-            if let Some(marker) = &n.fold_marker {
+            if let Some(marker) = &n.note {
                 put(n.x + n.label_width() + 1, n.y, marker);
             }
         }

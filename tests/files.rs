@@ -29,7 +29,7 @@ fn a_new_map_is_written_on_first_save() {
 }
 
 #[test]
-fn other_markdown_keeps_every_line_when_saved() {
+fn other_markdown_keeps_its_structure_when_saved() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("notes.md");
     fs::write(&file, "Intro\n# A\n- x\n").unwrap();
@@ -37,10 +37,7 @@ fn other_markdown_keeps_every_line_when_saved() {
     assert!(app.message.is_some(), "warns that saving will reformat");
     assert!(!app.is_dirty(), "reformatting alone isn't a change");
     app.save().unwrap();
-    assert_eq!(
-        fs::read_to_string(&file).unwrap(),
-        "# notes\n\n- Intro\n- A\n  - x\n"
-    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), "Intro\n\n# A\n\n- x\n");
 }
 
 #[cfg(unix)]

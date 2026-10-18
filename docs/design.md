@@ -6,43 +6,127 @@ format and the keys settle.
 
 ## The model
 
-A map is a tree of **topics**. A topic is one line of raw inline Markdown,
-trimmed: newlines, tabs and other control characters become spaces
-(`tree::normalize_text`). mull never escapes or unescapes that text, so
-`**bold**` or `[a link](…)` survive untouched.
+A map is a tree of **nodes**, and every node has a **kind** that says what
+it is in Markdown terms. The kind decides what the node may hold and how it
+is written back.
+
+| Kind | What it is | Text | Children |
+|---|---|---|---|
+| Document | the whole file, when it isn't one heading holding everything | the file's name, never written | anything |
+| Heading | a section | one line of inline Markdown | content, then sub-sections |
+| Item | a list item | its first line | items and blocks |
+| Block | content: a paragraph, code, a table, a quote, HTML, maths, front matter, a link or footnote definition, a rule | the exact Markdown source, any number of lines | none |
+
+Headings and items are **topics**: you add, type and rename them in mull.
+Blocks are **content**: mull shows them as leaves and lets you move, cut,
+copy and paste them, but never edits them; that's what a Markdown editor is
+for. A topic's text is raw inline Markdown on one line (`tree::normalize_text`),
+so `**bold**` and `[a link](…)` survive untouched; a block's text is copied
+in and out byte for byte.
+
+Items remember their marker (`-`, `*`, `+`, or `1.`/`1)` with a number),
+their task box (`[ ]`, `[x]` or none) and whether their list is loose
+(blank lines between items). Headings remember their level.
 
 There is exactly one root. Positions are **paths** of child indices from the
 root (`[]` is the root, `[1, 0]` the first child of the second child). The
-tree is an owned `Node { text, children, collapsed }`, which keeps equality,
-cloning and undo trivial. Undo is whole-tree snapshots: a mind map is small,
-and snapshots can't drift out of step with the operations the way inverse
-operations can.
+tree is an owned `Node { kind, text, children, collapsed }`, which keeps
+equality, cloning and undo trivial. Undo is whole-tree snapshots: a mind map
+is small, and snapshots can't drift out of step with the operations the way
+inverse operations can.
 
 `collapsed` is view state. It lives in the node so it follows the topic
 through moves, but it isn't saved, and folding isn't an undoable change.
 
+### Trees that Markdown can say
+
+Not every tree can be written as Markdown and read back as the same tree,
+so mull keeps to the ones that can (`tree::Node::check`):
+
+1. Blocks have no children.
+2. In a heading or the document, content (items and blocks) comes before
+   sub-sections: anything written after a heading belongs to it.
+3. Items hold items and blocks, never headings.
+4. Headings nest at most six deep.
+5. Front matter can only be the document's first child.
+6. Only the root can be a document.
+
+Adding and pasting place a node where the rules allow: a new item in a
+section goes after the section's content, before its sub-sections.
+Outdenting an item out of a sub-section does the same one level up. A
+change that would still break a rule (indenting a heading into a list item,
+swapping content below a sub-section, giving a block children) is refused
+with a message saying why, and the tree is left as it was.
+
 ## The file
 
-Written form (`markdown::serialize`): the root as `# heading`, everything
-else as a `-` list indented two spaces per level, with a blank line between
-the two. It's the plainest Markdown that still reads as an outline, and
-Markmap draws it as a mind map.
+mull reads Markdown with [markdown-rs](https://github.com/wooorm/markdown-rs)
+(CommonMark, GitHub's extensions, front matter and maths), then turns its
+syntax tree into a map (`markdown::parse`):
 
-Read form (`markdown::parse`) is a single rule applied line by line:
+- Headings nest by level: content after a heading belongs to it until a
+  heading of the same or a higher level. (In the syntax tree headings are
+  flat; this sectioning pass is what makes them a hierarchy.)
+- Lists become items, nested as the lists are. An item's first paragraph is
+  its text, lines joined with spaces; the rest of the item becomes its
+  children.
+- Everything else becomes a block, sliced verbatim from the file, with the
+  indentation of the list item around it removed.
+- If the file is one heading with everything inside it, that heading is the
+  root; otherwise the root is the document, named after the file.
 
-- A heading is a child of the nearest open heading of a lower level.
-- Any other non-blank line is a child of the nearest open line (since the
-  last heading) that is indented less, or else of the current heading.
-- List markers are stripped from the text; plain lines keep theirs.
+Saving walks the tree and writes each node as its kind (`markdown::serialize`):
+headings as `#` headings, items with their own markers, numbers and task
+boxes, blocks exactly as read, indented to sit inside their list item. A
+section's heading level is its stored level, raised if the section has been
+moved deeper and lowered if needed so that it still closes the sections
+before it; a file that was never restructured keeps its levels.
 
-So every non-blank line becomes exactly one topic. That's the guarantee
-that makes it safe to open arbitrary notes: structure may change on save,
-text never disappears. When the file on disk isn't already in the written
-form, mull says so on open.
+Text a user types into a topic is made safe to write (`markdown::safe_text`):
+if it would read back as something else (`# x` as an item becomes a
+heading inside it), its first character is escaped (`\# x`). Typing `[ ] `
+or `[x] ` at the start of an item makes it a task.
 
-Known gaps, all things that become topics rather than being understood:
-fenced code blocks, front matter, setext (`===`) headings, lazy paragraph
-continuation lines, and closing `#` sequences on headings.
+Saving keeps everything that changes how the file renders: the same HTML
+comes out before and after (a test checks this on the kitchen-sink fixture).
+What it doesn't keep is layout that renders the same:
+
+- blank lines are normalised to one between blocks;
+- underlined (setext) headings become `#` headings, closing `#`s go, and
+  skipped heading levels close up when a section moves;
+- indented code blocks become fenced ones;
+- ordered lists are renumbered from their first number;
+- an item's first paragraph is joined onto one line, so a hard line break
+  inside it is lost;
+- a list whose items have content blocks is written loose.
+
+Because the parser follows CommonMark, plain indented lines are a paragraph,
+not an outline: h-m-m's tab-indented files no longer open as maps.
+
+### Working around markdown-rs
+
+markdown-rs 1.0.0 (the latest release) has bugs that mull works around, each
+covered by a test:
+
+- Its front matter support panics on files that start with `---`, a blank
+  line and a list or quote. mull finds front matter itself
+  (`markdown::split_front_matter`) and leaves the construct off.
+- It can still panic on unusual mixes of setext underlines and rules. mull
+  catches the panic and keeps the file as one block, which saving writes
+  back unchanged, and says so on open.
+- It reads `# #x` as a heading saying "x"; the CommonMark answer is "#x".
+  mull takes heading text from the heading's own line.
+- It reads a rule straight after a setext heading, and the next line, as
+  one paragraph. mull splits a paragraph that starts with a rule.
+- Some constructs read differently depending on their neighbours (a quote
+  straight after a paragraph line takes the next line lazily). So
+  `markdown::parse` reads the file, writes it, and reads that again: the map
+  on screen is the file as saving will leave it, and any file settles after
+  one save.
+- A sub-list ending in an empty item and a blank line reads back loose.
+  That only changes blank lines, and is left alone.
+
+These are worth reporting upstream.
 
 ## The layout
 
@@ -56,7 +140,9 @@ can't overlap; the property tests check that, and that the map is exactly
 as tall as it has visible leaves.
 
 Long topics are cut to `--max-width` columns with `…`; the topic being typed
-is always shown in full.
+is always shown in full. A block shows its first line (a paragraph shows all
+of it, joined), with `[N lines]` after it when there's more, in a quieter
+style than topics.
 
 ## Keys
 
@@ -101,14 +187,15 @@ means 24-bit, otherwise the nearest xterm-256 colour, and `NO_COLOR` (or
 
 ## Open questions
 
-1. **First-level topics as `##` headings?** `## Topic` for depth one reads
-   better as a document and makes sections foldable in editors. Bullets
-   everywhere is simpler and diffs better.
+1. **Turning topics into sections.** Enter on a section adds a section, but
+   nothing yet makes the first sub-section of a heading, or turns a list
+   item into a heading and back. A key for each would do it.
 2. **Persist folds?** h-m-m doesn't. Options are a marker in the text, an
    HTML comment, or a sidecar file. Each costs some of the plain-Markdown
    promise.
-3. **Notes on topics.** Multi-line bodies under a topic (indented paragraphs
-   in the file) would make the format richer but need a notes pane.
+3. **Empty topics.** Enter on a new, empty topic keeps it, as `-` or `#`.
+   Dropping it instead (as Esc does) would be tidier, and would avoid a
+   markdown-rs quirk: a sub-list ending in an empty item reads back loose.
 4. **Classic radial layout.** The root in the middle, with children
    split left and right like a drawn mind map, instead of everything flowing
    right.

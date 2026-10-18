@@ -16,6 +16,7 @@ use crate::{
     keymap::{self, Context, Group, Hint},
     layout::Layout,
     theme::Theme,
+    tree::Node,
 };
 
 /// The hint bar grows to this many lines on narrow terminals, then drops
@@ -120,8 +121,11 @@ fn draw_map(buf: &mut Buffer, area: Rect, app: &App, map: &Layout, theme: &Theme
     }
     for node in &map.nodes {
         let branch = theme.branch(node.path.first().copied());
+        let is_block = app.tree.get(&node.path).is_some_and(Node::is_block);
         let style = if node.path != app.selected {
-            if node.path.len() <= 1 {
+            if is_block {
+                theme.block
+            } else if node.path.len() <= 1 {
                 branch.label
             } else {
                 theme.topic
@@ -132,7 +136,7 @@ fn draw_map(buf: &mut Buffer, area: Rect, app: &App, map: &Layout, theme: &Theme
             branch.selected
         };
         put(buf, area, view, node.x, node.y, &node.label, style);
-        if let Some(marker) = &node.fold_marker {
+        if let Some(marker) = &node.note {
             let x = node.x + node.label_width() + 1;
             put(buf, area, view, x, node.y, marker, branch.line);
         }
