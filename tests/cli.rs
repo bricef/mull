@@ -10,7 +10,7 @@ fn mull() -> Command {
 fn print_draws_the_map_as_text() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("plan.md");
-    fs::write(&file, "# Plan\n\n- Goals\n  - fast\n- Risks\n").unwrap();
+    fs::write(&file, "# Plan\n\n## Goals\n\n### fast\n\n## Risks\n").unwrap();
     let out = mull().arg("--print").arg(&file).output().unwrap();
     assert!(out.status.success());
     assert_eq!(

@@ -1,8 +1,10 @@
 # mull
 
-A keyboard-driven mind mapper for the terminal. Maps are plain Markdown
-files, so they diff cleanly, live happily in git, and render in anything
-that shows Markdown.
+A keyboard-driven outline editor for Markdown, in the terminal, drawn as a
+mind map. A file's headings are the map: you add, rename, reorder and
+re-nest sections, and everything else in them (paragraphs, lists, code,
+tables) travels along. Files stay plain Markdown, so they diff cleanly,
+live happily in git, and render in anything that shows Markdown.
 
 ```
                 ┌─ Getting there ─┬─ Flights
@@ -39,14 +41,15 @@ mull --print trip.md    # draw the map as text and exit
 mull --keys             # list every key binding
 ```
 
-Start with `Tab` to add a child and `Enter` to add a sibling; both drop you
-straight into typing. `Enter` keeps the text, `Esc` throws it away. `s`
-saves, `q` quits, `?` shows every key.
+Start with `Tab` to add a sub-section and `Enter` to add a section after
+the one you're on; both drop you straight into typing the heading. `Enter`
+keeps the text, `Esc` throws it away. `b` hides the content blocks to show
+only the outline of sections. `s` saves, `q` quits, `?` shows every key.
 
 ## Colour
 
 mull is drawn in [Catppuccin Mocha](https://catppuccin.com/palette). Each
-first-level topic and everything under it gets its own accent, like the
+first-level section and everything under it gets its own accent, like the
 branches of a hand-drawn mind map. The status line names the mode (MAP, EDIT,
 HELP) in that mode's colour, and messages are coloured by what they mean:
 green for saved, yellow for a key that did nothing, red for a failure.
@@ -57,45 +60,52 @@ when [`NO_COLOR`](https://no-color.org) is set.
 
 ## The file format
 
-A new map is a heading with a list under it:
+A new map is a heading, and the sections you add under it are headings too:
 
 ```markdown
 # Trip to Lisbon
 
-- Getting there
-  - Flights
-  - Train from Madrid
-- Where to stay
-```
+## Getting there
 
-That's the layout [Markmap](https://markmap.js.org) draws as a mind map too.
+### Flights
+
+### Train from Madrid
+
+## Where to stay
+```
 
 Any Markdown file opens as a map. mull reads it with a real CommonMark
 parser ([markdown-rs](https://github.com/wooorm/markdown-rs), with GitHub's
-extensions, front matter and maths):
+extensions and maths):
 
-- **Headings are sections:** everything after a heading sits under it, up
-  to the next heading of the same or a higher level.
-- **List items are topics,** nested as the lists are.
-- **Everything else is content:** paragraphs, code, tables, quotes, HTML,
-  maths, front matter, and link and footnote definitions each become one
-  leaf on the map, shown in a quieter style with its first line.
+- **Headings are sections**, the nodes of the map: everything after a
+  heading sits under it, up to the next heading of the same or a higher
+  level. Sections nest up to six deep.
+- **Everything else is a block**, a leaf of the map: each paragraph, list,
+  code block, table, quote, HTML block, maths block, rule, and link or
+  footnote definition, shown in a quieter style by its first line. A whole
+  list is one block.
+- **The root** is the file's one top-level heading, if it has exactly one
+  with nothing above it. Otherwise it's the document, named after the file.
+- **Front matter** is the file's metadata: kept, but not shown and not part
+  of the map.
 
-You type into headings and list items. Content blocks can be moved, cut,
-copied and pasted, but mull doesn't edit them: that's what a Markdown editor
-is for.
+You type into headings. Blocks can be moved, cut, copied and pasted, but
+mull doesn't edit them: that's what a Markdown editor is for. (Editing a
+list's items in mull is planned: [#1](https://github.com/bricef/mull/issues/1).)
 
-Saving writes each node back as what it is: headings as headings, list items
-with their own markers, numbers and task boxes, and content blocks exactly
-as they were. A file renders the same before and after mull saves it. What
-can change is layout that doesn't affect rendering: blank lines, underlined
-headings (written with `#`), indented code (written fenced), and list
-numbering. mull says so when you open a file it would reformat.
+Saving writes the front matter back first, then each section as a heading
+at the level its place in the tree gives it, and each block exactly as it
+was. A file renders the same before and after mull saves it. What can change
+is layout that doesn't affect rendering: blank lines, underlined headings
+(written with `#`), closing `#`s and indented code (written fenced). mull
+says so when you open a file it would reformat.
 
-Some trees can't be written as Markdown and read back the same, such as
-content after a sub-section, or a section inside a list item. mull refuses
-those moves and says why. Saves are atomic, go through symlinks, and keep
-the file's permissions. Folds are view state and aren't saved.
+Some trees can't be written as Markdown and read back the same, such as a
+block after a sub-section, or two lists side by side (which would read back
+as one). mull refuses those moves and says why. Saves are atomic, go through
+symlinks, and keep the file's permissions. Folds and hidden blocks are view
+state and aren't saved.
 
 ## Keys
 
@@ -109,14 +119,14 @@ the file's permissions. Folds are view state and aren't saved.
 | `k` `↑` | Previous topic at this level |
 | `g` `Home` | Go to the root |
 
-**Topics**
+**Sections**
 
 | Keys | Action |
 |---|---|
-| `Tab` | Add a child |
-| `Enter` | Add a sibling below |
-| `e` `i` | Edit the text |
-| `c` | Replace the text |
+| `Tab` | Add a sub-section |
+| `Enter` | Add a section after |
+| `e` `i` | Edit the heading |
+| `c` | Replace the heading |
 | `d` `Del` | Cut, with everything under it |
 | `y` | Copy, with everything under it |
 | `p` | Paste as the last child |
@@ -126,6 +136,7 @@ the file's permissions. Folds are view state and aren't saved.
 | Keys | Action |
 |---|---|
 | `Space` | Fold or unfold |
+| `b` | Show or hide content blocks |
 | `J` | Swap with the sibling below |
 | `K` | Swap with the sibling above |
 | `H` | Move out, after the parent |

@@ -21,11 +21,16 @@ use crate::tree::{Node, Path};
 pub struct Options {
     /// Widest a topic is shown before it's cut short with `…`.
     pub max_text_width: usize,
+    /// Whether content blocks are placed, or only sections.
+    pub show_blocks: bool,
 }
 
 impl Default for Options {
     fn default() -> Self {
-        Options { max_text_width: 40 }
+        Options {
+            max_text_width: 40,
+            show_blocks: true,
+        }
     }
 }
 
@@ -132,14 +137,20 @@ impl Placer<'_> {
                 (lines > 0).then(|| format!("[{} lines]", lines + 1))
             },
         });
-        if node.children.is_empty() || node.collapsed {
+        let shown: Vec<(usize, &Node)> = node
+            .children
+            .iter()
+            .enumerate()
+            .filter(|(_, child)| self.options.show_blocks || !child.is_block())
+            .collect();
+        if shown.is_empty() || node.collapsed {
             return (top, 1);
         }
 
         let child_x = x + label_width + GAP;
-        let mut rows = Vec::with_capacity(node.children.len());
+        let mut rows = Vec::with_capacity(shown.len());
         let mut next = top;
-        for (i, child) in node.children.iter().enumerate() {
+        for (i, child) in shown {
             path.push(i);
             let (row, height) = self.place(child, path, child_x, next);
             path.pop();
@@ -317,14 +328,20 @@ mod tests {
 
     #[test]
     fn long_topics_are_cut_short() {
-        let options = Options { max_text_width: 5 };
+        let options = Options {
+            max_text_width: 5,
+            ..Options::default()
+        };
         let map = layout(&Node::new("abcdefgh"), &options, None);
         assert_eq!(map.nodes[0].label, "abcd…");
     }
 
     #[test]
     fn the_topic_being_typed_is_shown_in_full() {
-        let options = Options { max_text_width: 5 };
+        let options = Options {
+            max_text_width: 5,
+            ..Options::default()
+        };
         let tree = Node::with_children("Root", vec![Node::new("short")]);
         let map = layout(&tree, &options, Some((&[0], "much longer text")));
         assert_eq!(map.to_text(), "Root ─── much longer text\n");

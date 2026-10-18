@@ -6,38 +6,42 @@ format and the keys settle.
 
 ## The model
 
-A map is a tree of **nodes**, and every node has a **kind** that says what
-it is in Markdown terms. The kind decides what the node may hold and how it
-is written back.
+mull edits the **structure** of a Markdown document: its sections. A map is
+a tree of nodes, and every node has a **kind** that says what it is in
+Markdown terms. The kind decides what the node may hold and how it is
+written back.
 
 | Kind | What it is | Text | Children |
 |---|---|---|---|
-| Document | the whole file, when it isn't one heading holding everything | the file's name, never written | anything |
-| Heading | a section | one line of inline Markdown | content, then sub-sections |
-| Item | a list item | its first line | items and blocks |
-| Block | content: a paragraph, code, a table, a quote, HTML, maths, front matter, a link or footnote definition, a rule | the exact Markdown source, any number of lines | none |
+| Document | the whole file, when it isn't one top-level heading holding everything | the file's name, never written | blocks, then sections |
+| Heading | a section: a heading and everything under it | one line of inline Markdown | blocks, then sub-sections |
+| Block | content: a paragraph, a whole list, code, a table, a quote, HTML, maths, a rule, a link or footnote definition | the exact Markdown source, any number of lines | none |
 
-Headings and items are **topics**: you add, type and rename them in mull.
-A new topic left empty when you press Enter is dropped, as with Esc.
-Blocks are **content**: mull shows them as leaves and lets you move, cut,
-copy and paste them, but never edits them; that's what a Markdown editor is
-for. A topic's text is raw inline Markdown on one line (`tree::normalize_text`),
-so `**bold**` and `[a link](…)` survive untouched; a block's text is copied
-in and out byte for byte.
+Sections are the **nodes** of the map: you add, type and rename them, and
+reorder and re-nest them with everything they hold. A new section left
+empty when you press Enter is dropped, as with Esc. Blocks are the
+**leaves**: mull shows them, and lets you move, cut, copy and paste them,
+but never edits them; that's what a Markdown editor is for. `b` hides them,
+to show only the outline of sections, and shows them again. A heading's
+text is raw inline Markdown on one line (`tree::normalize_text`), so
+`**bold**` and `[a link](…)` survive untouched; a block's text is copied in
+and out byte for byte. A list is one block: editing its items in mull is
+planned, as something that looks different from sections
+([#1](https://github.com/bricef/mull/issues/1)).
 
-Items remember their marker (`-`, `*`, `+`, or `1.`/`1)` with a number),
-their task box (`[ ]`, `[x]` or none) and whether their list is loose
-(blank lines between items). Headings remember their level.
+Front matter isn't part of the tree. It's the file's metadata, held beside
+it (`markdown::Map`), never shown, and written back first.
 
 There is exactly one root. Positions are **paths** of child indices from the
 root (`[]` is the root, `[1, 0]` the first child of the second child). The
 tree is an owned `Node { kind, text, children, collapsed }`, which keeps
-equality, cloning and undo trivial. Undo is whole-tree snapshots: a mind map
-is small, and snapshots can't drift out of step with the operations the way
+equality, cloning and undo trivial. Undo is whole-tree snapshots: a map is
+small, and snapshots can't drift out of step with the operations the way
 inverse operations can.
 
-`collapsed` is view state. It lives in the node so it follows the topic
+`collapsed` is view state. It lives in the node so it follows the section
 through moves, but it isn't saved, and folding isn't an undoable change.
+Hiding blocks is view state too.
 
 ### Trees that Markdown can say
 
@@ -45,48 +49,47 @@ Not every tree can be written as Markdown and read back as the same tree,
 so mull keeps to the ones that can (`tree::Node::check`):
 
 1. Blocks have no children.
-2. In a heading or the document, content (items and blocks) comes before
-   sub-sections: anything written after a heading belongs to it.
-3. Items hold items and blocks, never headings.
-4. Headings nest at most six deep.
-5. Front matter can only be the document's first child.
-6. Only the root can be a document.
+2. In a section or the document, blocks come before sub-sections: anything
+   written after a heading belongs to it.
+3. Sections nest at most six deep.
+4. Only the root can be the document.
+5. Two lists side by side whose markers continue each other (`-` and `-`,
+   `1.` and `3.`) would read back as one list, so they can't be neighbours.
 
-Adding and pasting place a node where the rules allow: a new item in a
-section goes after the section's content, before its sub-sections.
-Outdenting an item out of a sub-section does the same one level up. A
-change that would still break a rule (indenting a heading into a list item,
-swapping content below a sub-section, giving a block children) is refused
-with a message saying why, and the tree is left as it was.
+Adding and pasting place a node where the rules allow: a pasted block goes
+after the section's blocks, before its sub-sections, and a new section goes
+after the sub-sections. Outdenting a block out of a sub-section does the
+same one level up. A change that would still break a rule (moving a block
+below a sub-section, giving a block children, cutting what separated two
+lists) is refused with a message saying why, and the tree is left as it was.
 
 ## The file
 
 mull reads Markdown with [markdown-rs](https://github.com/wooorm/markdown-rs)
-(CommonMark, GitHub's extensions, front matter and maths), then turns its
-syntax tree into a map (`markdown::parse`):
+(CommonMark, GitHub's extensions and maths), then turns its syntax tree into
+a map (`markdown::parse`):
 
-- Headings nest by level: content after a heading belongs to it until a
+- Front matter (`---` … `---` or `+++` … `+++` at the very top) is set
+  aside as the map's metadata.
+- Headings nest by level: what follows a heading belongs to it until a
   heading of the same or a higher level. (In the syntax tree headings are
   flat; this sectioning pass is what makes them a hierarchy.)
-- Lists become items, nested as the lists are. An item's first paragraph is
-  its text, lines joined with spaces; the rest of the item becomes its
-  children.
-- Everything else becomes a block, sliced verbatim from the file, with the
-  indentation of the list item around it removed.
-- If the file is one heading with everything inside it, that heading is the
-  root; otherwise the root is the document, named after the file.
+- Everything else becomes a block, sliced verbatim from the file. A list is
+  one block, however deeply nested; so is a quote.
+- If the file is exactly one top-level heading, of any level, with nothing
+  above it, that heading is the root. Otherwise the root is the document,
+  named after the file.
 
-Saving walks the tree and writes each node as its kind (`markdown::serialize`):
-headings as `#` headings, items with their own markers, numbers and task
-boxes, blocks exactly as read, indented to sit inside their list item. A
-section's heading level is its stored level, raised if the section has been
-moved deeper and lowered if needed so that it still closes the sections
-before it; a file that was never restructured keeps its levels.
+Saving writes the front matter, then walks the tree (`markdown::serialize`):
+sections as `#` headings and blocks exactly as read, with a blank line
+between each. A section's heading level is its stored level, raised if the
+section has been moved deeper and lowered if needed so that it still closes
+the sections before it; a file that was never restructured keeps its
+levels.
 
-Text a user types into a topic is made safe to write (`markdown::safe_text`):
-if it would read back as something else (`# x` as an item becomes a
-heading inside it), its first character is escaped (`\# x`). Typing `[ ] `
-or `[x] ` at the start of an item makes it a task.
+A heading typed in mull is made safe to write (`markdown::safe_text`): if it
+would read back as something else (`C #` would lose its `#` as a closing
+sequence), the character at fault is escaped (`C \#`).
 
 Saving keeps everything that changes how the file renders: the same HTML
 comes out before and after (a test checks this on the kitchen-sink fixture).
@@ -95,14 +98,7 @@ What it doesn't keep is layout that renders the same:
 - blank lines are normalised to one between blocks;
 - underlined (setext) headings become `#` headings, closing `#`s go, and
   skipped heading levels close up when a section moves;
-- indented code blocks become fenced ones;
-- ordered lists are renumbered from their first number;
-- an item's first paragraph is joined onto one line, so a hard line break
-  inside it is lost;
-- a list whose items have content blocks is written loose.
-
-Because the parser follows CommonMark, plain indented lines are a paragraph,
-not an outline: h-m-m's tab-indented files no longer open as maps.
+- indented code blocks become fenced ones.
 
 ### Working around markdown-rs
 
@@ -124,8 +120,6 @@ covered by a test:
   `markdown::parse` reads the file, writes it, and reads that again: the map
   on screen is the file as saving will leave it, and any file settles after
   one save.
-- A sub-list ending in an empty item and a blank line reads back loose.
-  That only changes blank lines, and is left alone.
 
 These are worth reporting upstream.
 
@@ -188,9 +182,8 @@ means 24-bit, otherwise the nearest xterm-256 colour, and `NO_COLOR` (or
 
 ## Open questions
 
-1. **Turning topics into sections.** Enter on a section adds a section, but
-   nothing yet makes the first sub-section of a heading, or turns a list
-   item into a heading and back. A key for each would do it.
+1. **Editing lists** ([#1](https://github.com/bricef/mull/issues/1)): expand a
+   list block into its items, as topics that look different from sections.
 2. **Persist folds?** h-m-m doesn't. Options are a marker in the text, an
    HTML comment, or a sidecar file. Each costs some of the plain-Markdown
    promise.

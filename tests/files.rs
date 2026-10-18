@@ -9,7 +9,7 @@ fn press(app: &mut App, code: KeyCode) {
     app.handle_key(KeyEvent::from(code));
 }
 
-/// Add a child of the selection called `text`.
+/// Add a sub-section of the selection called `text`.
 fn add_child(app: &mut App, text: &str) {
     press(app, KeyCode::Tab);
     text.chars().for_each(|c| press(app, KeyCode::Char(c)));
@@ -24,7 +24,7 @@ fn a_new_map_is_written_on_first_save() {
     assert!(!file.exists());
     add_child(&mut app, "first");
     press(&mut app, KeyCode::Char('s'));
-    assert_eq!(fs::read_to_string(&file).unwrap(), "# ideas\n\n- first\n");
+    assert_eq!(fs::read_to_string(&file).unwrap(), "# ideas\n\n## first\n");
     assert!(!app.is_dirty());
 }
 
@@ -62,7 +62,7 @@ fn saving_writes_through_symlinks_and_keeps_permissions() {
             .file_type()
             .is_symlink()
     );
-    assert_eq!(fs::read_to_string(&real).unwrap(), "# R\n\n- x\n");
+    assert_eq!(fs::read_to_string(&real).unwrap(), "# R\n\n## x\n");
     let mode = fs::metadata(&real).unwrap().permissions().mode();
     assert_eq!(mode & 0o777, 0o640);
 }

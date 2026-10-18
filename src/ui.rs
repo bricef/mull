@@ -205,6 +205,9 @@ fn status_line(app: &App, theme: &Theme, width: usize) -> Line<'static> {
     if app.is_dirty() {
         spans.push(Span::styled("* ", theme.dirty));
     }
+    if !app.shows_blocks() {
+        spans.push(Span::styled(" blocks hidden ", theme.dirty));
+    }
     spans.push(Span::raw(" "));
     let room = width.saturating_sub(spans.iter().map(Span::width).sum());
     match &app.message {
@@ -480,8 +483,9 @@ mod tests {
         let hints = rows[8..].join("\n");
         for expected in [
             "hjkl move",
-            "Tab child",
-            "Enter sibling",
+            "Tab sub-section",
+            "Enter section",
+            "b blocks",
             "q quit",
             "? all keys",
         ] {

@@ -1,4 +1,4 @@
-//! The mind map: a tree of nodes, each a kind of Markdown, addressed by
+//! The map: a tree of sections holding blocks of content, addressed by
 //! paths. See docs/design.md, "The model".
 
 use std::fmt;
@@ -13,57 +13,18 @@ pub enum Kind {
     /// The whole file, when it isn't one heading holding everything. Its text
     /// is the file's name and is never written.
     Document,
-    /// A section heading, with the level it was read or made with.
+    /// A section: a heading and everything under it. The level is the one it
+    /// was read or made with; where it sits in the tree decides the level it
+    /// is written at.
     Heading { level: u8 },
-    /// A list item: a topic whose text is the item's first line.
-    Item(ItemStyle),
-    /// Content kept exactly as written: a leaf that mull moves but doesn't
-    /// edit.
+    /// Content kept exactly as written, lists included: a leaf that mull
+    /// moves but doesn't edit.
     Block(BlockKind),
 }
 
 impl Default for Kind {
     fn default() -> Self {
-        Kind::Item(ItemStyle::default())
-    }
-}
-
-/// How a list item is written.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ItemStyle {
-    pub marker: Marker,
-    /// The task box: `Some(false)` for `[ ]`, `Some(true)` for `[x]`.
-    pub checked: Option<bool>,
-    /// Whether its list has blank lines between items.
-    pub loose: bool,
-}
-
-impl Default for ItemStyle {
-    fn default() -> Self {
-        ItemStyle {
-            marker: Marker::Bullet('-'),
-            checked: None,
-            loose: false,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Marker {
-    /// `-`, `*` or `+`.
-    Bullet(char),
-    /// `1.` or `1)`. Lists are renumbered from their first item's number.
-    Ordered { number: u32, delimiter: char },
-}
-
-impl Marker {
-    /// Whether an item with this marker continues a list of `other`s.
-    pub fn same_list(self, other: Marker) -> bool {
-        match (self, other) {
-            (Marker::Bullet(a), Marker::Bullet(b)) => a == b,
-            (Marker::Ordered { delimiter: a, .. }, Marker::Ordered { delimiter: b, .. }) => a == b,
-            _ => false,
-        }
+        Kind::Heading { level: 1 }
     }
 }
 
@@ -72,16 +33,16 @@ impl Marker {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BlockKind {
     Paragraph,
+    List,
     Code,
     Table,
     Quote,
     Html,
     Maths,
-    FrontMatter,
     Definition,
     Footnote,
     Rule,
-    /// Anything else, such as a heading inside a list item.
+    /// Anything else markdown-rs reads, or a file it can't read at all.
     Other,
 }
 
@@ -89,9 +50,10 @@ pub enum BlockKind {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Node {
     pub kind: Kind,
-    /// For topics, one line of raw inline Markdown with no surrounding
-    /// whitespace (see [`normalize_text`]). For blocks, the exact Markdown
-    /// source, any number of lines. For the document, the file's name.
+    /// For a section, its heading: one line of raw inline Markdown with no
+    /// surrounding whitespace (see [`normalize_text`]). For a block, its
+    /// exact Markdown source, any number of lines. For the document, the
+    /// file's name.
     pub text: String,
     pub children: Vec<Node>,
     /// Folded nodes hide their children on screen. This is view state: it
@@ -104,31 +66,25 @@ pub struct Node {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Problem {
     BlockWithChildren,
-    SectionInList,
     ContentAfterSection,
     TooDeep,
-    FrontMatterNotFirst,
     NestedDocument,
-    ParagraphUnderEmptyItem,
+    ListsWouldMerge,
 }
 
 impl fmt::Display for Problem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Problem::BlockWithChildren => "Content blocks can't hold topics",
-            Problem::SectionInList => "A section can't go inside a list item",
+            Problem::BlockWithChildren => "Content blocks can't hold sections",
             Problem::ContentAfterSection => "Content has to come before a section's sub-sections",
             Problem::TooDeep => "Sections only nest six deep",
-            Problem::FrontMatterNotFirst => "Front matter has to stay at the top of the file",
             Problem::NestedDocument => "Only the root can be the whole document",
-            Problem::ParagraphUnderEmptyItem => {
-                "An item with no text can't start with a paragraph: it would become the text"
-            }
+            Problem::ListsWouldMerge => "Two lists side by side would read back as one list",
         })
     }
 }
 
-/// Reduce arbitrary input to text a topic can hold: a single trimmed line,
+/// Reduce arbitrary input to text a heading can hold: a single trimmed line,
 /// with control characters (newlines and tabs included) turned into spaces.
 pub fn normalize_text(text: &str) -> String {
     let line: String = text
@@ -164,23 +120,36 @@ pub fn child_path(parent: &[usize], index: usize) -> Path {
     path
 }
 
+/// How a list's first marker continues another list: lists with the same
+/// bullet, or numbered with the same delimiter, are one list in Markdown
+/// unless something else stands between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ListMarker {
+    Bullet(char),
+    Numbered(char),
+}
+
+fn list_marker(source: &str) -> Option<ListMarker> {
+    let source = source.trim_start_matches([' ', '\t']);
+    let first = source.chars().next()?;
+    if matches!(first, '-' | '*' | '+') {
+        return Some(ListMarker::Bullet(first));
+    }
+    let digits = source.bytes().take_while(u8::is_ascii_digit).count();
+    let delimiter = source[digits..].chars().next()?;
+    (digits > 0 && matches!(delimiter, '.' | ')')).then_some(ListMarker::Numbered(delimiter))
+}
+
 impl Node {
-    /// A plain list item.
+    /// A section titled `text`. Its level is decided by where it sits when
+    /// written.
     pub fn new(text: &str) -> Self {
-        Node::item(ItemStyle::default(), text)
+        Node::heading(1, text)
     }
 
-    /// A plain list item holding `children`.
+    /// A section titled `text` holding `children`.
     pub fn with_children(text: &str, children: Vec<Node>) -> Self {
         Node::new(text).with(children)
-    }
-
-    pub fn item(style: ItemStyle, text: &str) -> Self {
-        Node {
-            kind: Kind::Item(style),
-            text: normalize_text(text),
-            ..Node::default()
-        }
     }
 
     pub fn heading(level: u8, text: &str) -> Self {
@@ -222,30 +191,20 @@ impl Node {
         matches!(self.kind, Kind::Heading { .. })
     }
 
-    /// What the map shows for this node: a topic's text (after its task box,
-    /// if it has one), a paragraph joined onto one line, or another block's
-    /// first line.
+    /// What the map shows for this node: a section's heading, a paragraph
+    /// joined onto one line, or another block's first line.
     pub fn label(&self) -> String {
         match self.kind {
             Kind::Block(BlockKind::Paragraph) => join_lines(&self.text),
             Kind::Block(_) => self.text.lines().next().unwrap_or("").trim().to_string(),
-            Kind::Item(ItemStyle {
-                checked: Some(done),
-                ..
-            }) => {
-                format!("[{}] {}", if done { "x" } else { " " }, self.text)
-            }
-            _ => self.text.clone(),
+            Kind::Document | Kind::Heading { .. } => self.text.clone(),
         }
     }
 
     /// How many lines a block has beyond the one its label shows.
     pub fn hidden_lines(&self) -> usize {
         match self.kind {
-            Kind::Block(BlockKind::Paragraph)
-            | Kind::Document
-            | Kind::Heading { .. }
-            | Kind::Item(_) => 0,
+            Kind::Block(BlockKind::Paragraph) | Kind::Document | Kind::Heading { .. } => 0,
             Kind::Block(_) => self.text.lines().count().saturating_sub(1),
         }
     }
@@ -264,11 +223,16 @@ impl Node {
         1 + self.children.iter().map(Node::size).sum::<usize>()
     }
 
-    /// Whether the node at `path` exists and is on screen: no ancestor of it
-    /// is folded.
+    /// Whether the node at `path` exists and no ancestor of it is folded.
     pub fn is_visible(&self, path: &[usize]) -> bool {
         self.get(path).is_some()
             && (0..path.len()).all(|depth| self.get(&path[..depth]).is_some_and(|n| !n.collapsed))
+    }
+
+    /// Whether the node at `path` is on screen: visible, and not a block
+    /// while blocks are hidden.
+    pub fn is_shown(&self, path: &[usize], show_blocks: bool) -> bool {
+        self.is_visible(path) && (show_blocks || self.get(path).is_some_and(|n| !n.is_block()))
     }
 
     /// Where a section's content ends and its sub-sections begin.
@@ -365,55 +329,44 @@ impl Node {
         let level = match self.kind {
             Kind::Document => 0,
             Kind::Heading { level } => level.clamp(1, 6),
-            _ => 1,
+            Kind::Block(_) => 1,
         };
-        self.check_children(level, true)
+        self.check_children(level)
     }
 
-    fn check_children(&self, level: u8, is_root: bool) -> Result<(), Problem> {
-        let section = is_root || matches!(self.kind, Kind::Heading { .. } | Kind::Document);
+    fn check_children(&self, level: u8) -> Result<(), Problem> {
         let mut ceiling = 6;
         let mut seen_heading = false;
-        for (i, child) in self.children.iter().enumerate() {
+        let mut previous_list: Option<ListMarker> = None;
+        for child in &self.children {
+            let list = match child.kind {
+                Kind::Block(BlockKind::List) => list_marker(&child.text),
+                _ => None,
+            };
             match child.kind {
                 Kind::Document => return Err(Problem::NestedDocument),
-                Kind::Block(_) if !child.children.is_empty() => {
-                    return Err(Problem::BlockWithChildren);
-                }
-                Kind::Block(BlockKind::FrontMatter)
-                    if !(is_root && self.kind == Kind::Document && i == 0) =>
-                {
-                    return Err(Problem::FrontMatterNotFirst);
-                }
                 Kind::Heading { level: stored } => {
-                    if !section {
-                        return Err(Problem::SectionInList);
-                    }
                     let written = written_level(level, stored, ceiling);
                     if written > 6 {
                         return Err(Problem::TooDeep);
                     }
                     ceiling = written;
                     seen_heading = true;
-                    child.check_children(written, false)?;
+                    child.check_children(written)?;
                 }
-                Kind::Item(_) | Kind::Block(_) => {
+                Kind::Block(_) => {
+                    if !child.children.is_empty() {
+                        return Err(Problem::BlockWithChildren);
+                    }
                     if seen_heading {
                         return Err(Problem::ContentAfterSection);
                     }
-                    let starts_with_paragraph = child
-                        .children
-                        .first()
-                        .is_some_and(|c| c.kind == Kind::Block(BlockKind::Paragraph));
-                    if matches!(child.kind, Kind::Item(_))
-                        && child.text.is_empty()
-                        && starts_with_paragraph
-                    {
-                        return Err(Problem::ParagraphUnderEmptyItem);
+                    if list.is_some() && list == previous_list {
+                        return Err(Problem::ListsWouldMerge);
                     }
-                    child.check_children(level, false)?;
                 }
             }
+            previous_list = list;
         }
         Ok(())
     }
@@ -433,12 +386,16 @@ mod tests {
         )
     }
 
+    fn paragraph(text: &str) -> Node {
+        Node::block(BlockKind::Paragraph, text)
+    }
+
     /// A section with content, then two sub-sections.
     fn sections() -> Node {
         Node::heading(1, "Root").with(vec![
-            Node::new("item"),
-            Node::block(BlockKind::Paragraph, "Some prose."),
-            Node::heading(2, "A").with(vec![Node::new("a1")]),
+            paragraph("Some prose."),
+            Node::block(BlockKind::List, "- one\n- two"),
+            Node::heading(2, "A").with(vec![paragraph("a1")]),
             Node::heading(2, "B"),
         ])
     }
@@ -482,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn top_level_topics_cannot_outdent() {
+    fn top_level_nodes_cannot_outdent() {
         let mut tree = sample();
         assert_eq!(tree.outdent(&[0]), None);
         assert_eq!(tree, sample());
@@ -515,10 +472,21 @@ mod tests {
     }
 
     #[test]
-    fn new_content_in_a_section_goes_before_its_sub_sections() {
+    fn hiding_blocks_hides_only_blocks() {
+        let tree = sections();
+        assert!(tree.is_shown(&[0], true));
+        assert!(!tree.is_shown(&[0], false));
+        assert!(tree.is_shown(&[2], false));
+    }
+
+    #[test]
+    fn new_content_goes_before_sub_sections_and_new_sections_after() {
         let mut tree = sections();
-        assert_eq!(tree.append(&[], Node::new("new")), Some(vec![2]));
-        assert_eq!(texts(&tree), ["item", "Some prose.", "new", "A", "B"]);
+        assert_eq!(tree.append(&[], paragraph("new")), Some(vec![2]));
+        assert_eq!(
+            texts(&tree),
+            ["Some prose.", "- one\n- two", "new", "A", "B"]
+        );
         assert_eq!(tree.append(&[], Node::heading(2, "C")), Some(vec![5]));
         assert!(tree.check().is_ok());
     }
@@ -527,14 +495,17 @@ mod tests {
     fn outdenting_out_of_a_sub_section_lands_before_the_sub_sections() {
         let mut tree = sections();
         assert_eq!(tree.outdent(&[2, 0]), Some(vec![2]));
-        assert_eq!(texts(&tree), ["item", "Some prose.", "a1", "A", "B"]);
+        assert_eq!(
+            texts(&tree),
+            ["Some prose.", "- one\n- two", "a1", "A", "B"]
+        );
         assert!(tree.check().is_ok());
     }
 
     #[test]
     fn indenting_a_section_makes_it_the_last_sub_section_above() {
         let mut tree = Node::heading(1, "Root").with(vec![
-            Node::heading(2, "A").with(vec![Node::new("a1"), Node::heading(3, "A.1")]),
+            Node::heading(2, "A").with(vec![paragraph("a1"), Node::heading(3, "A.1")]),
             Node::heading(2, "B"),
         ]);
         assert_eq!(tree.indent(&[1]), Some(vec![0, 2]));
@@ -549,10 +520,6 @@ mod tests {
         ]);
         assert_eq!(block_with_child.check(), Err(Problem::BlockWithChildren));
 
-        let section_in_list =
-            Node::heading(1, "R").with(vec![Node::new("item").with(vec![Node::heading(2, "H")])]);
-        assert_eq!(section_in_list.check(), Err(Problem::SectionInList));
-
         let mut content_after = sections();
         content_after.children.swap(1, 2);
         assert_eq!(content_after.check(), Err(Problem::ContentAfterSection));
@@ -564,21 +531,38 @@ mod tests {
         let deep = Node::heading(1, "root").with(vec![deep]);
         assert_eq!(deep.check(), Err(Problem::TooDeep));
 
-        let late_front_matter = Node::document("d").with(vec![
-            Node::new("x"),
-            Node::block(BlockKind::FrontMatter, "---\na: b\n---"),
-        ]);
-        assert_eq!(late_front_matter.check(), Err(Problem::FrontMatterNotFirst));
-
         let nested = Node::heading(1, "R").with(vec![Node::document("d")]);
         assert_eq!(nested.check(), Err(Problem::NestedDocument));
 
-        let empty_item = Node::heading(1, "R").with(vec![
-            Node::new("").with(vec![Node::block(BlockKind::Paragraph, "text")]),
+        let merging = Node::heading(1, "R").with(vec![
+            Node::block(BlockKind::List, "- a"),
+            Node::block(BlockKind::List, "- b"),
         ]);
-        assert_eq!(empty_item.check(), Err(Problem::ParagraphUnderEmptyItem));
+        assert_eq!(merging.check(), Err(Problem::ListsWouldMerge));
 
         assert!(sections().check().is_ok());
+    }
+
+    #[test]
+    fn only_lists_that_continue_each_other_would_merge() {
+        let pair = |a: &str, b: &str| {
+            Node::heading(1, "R")
+                .with(vec![
+                    Node::block(BlockKind::List, a),
+                    Node::block(BlockKind::List, b),
+                ])
+                .check()
+        };
+        assert_eq!(pair("1. a", "3. b"), Err(Problem::ListsWouldMerge));
+        assert!(pair("- a", "* b").is_ok());
+        assert!(pair("1. a", "1) b").is_ok());
+        assert!(pair("- a", "1. b").is_ok());
+        let apart = Node::heading(1, "R").with(vec![
+            Node::block(BlockKind::List, "- a"),
+            paragraph("between"),
+            Node::block(BlockKind::List, "- b"),
+        ]);
+        assert!(apart.check().is_ok());
     }
 
     #[test]
@@ -591,33 +575,16 @@ mod tests {
     }
 
     #[test]
-    fn tasks_show_their_box() {
-        let todo = Node::item(
-            ItemStyle {
-                checked: Some(false),
-                ..ItemStyle::default()
-            },
-            "milk",
-        );
-        let done = Node::item(
-            ItemStyle {
-                checked: Some(true),
-                ..ItemStyle::default()
-            },
-            "eggs",
-        );
-        assert_eq!(
-            (todo.label(), done.label()),
-            ("[ ] milk".to_string(), "[x] eggs".to_string())
-        );
-    }
-
-    #[test]
     fn blocks_show_a_line_and_count_the_rest() {
         let code = Node::block(BlockKind::Code, "```rust\nfn main() {}\n```");
         assert_eq!(
             (code.label(), code.hidden_lines()),
             ("```rust".to_string(), 2)
+        );
+        let list = Node::block(BlockKind::List, "- one\n- two");
+        assert_eq!(
+            (list.label(), list.hidden_lines()),
+            ("- one".to_string(), 1)
         );
         let prose = Node::block(BlockKind::Paragraph, "One line\nand another.");
         assert_eq!(

@@ -25,6 +25,7 @@ pub enum Action {
     Paste,
     // Structure
     Fold,
+    ToggleBlocks,
     MoveDown,
     MoveUp,
     Outdent,
@@ -85,7 +86,7 @@ impl Group {
     pub fn title(self) -> &'static str {
         match self {
             Group::Move => "Move",
-            Group::Topics => "Topics",
+            Group::Topics => "Sections",
             Group::Structure => "Structure",
             Group::File => "File",
             Group::Typing => "While typing",
@@ -217,15 +218,16 @@ pub const BINDINGS: &[Binding] = &[
     bind(Group::Move, Action::Up, &[key('k'), special(KeyCode::Up)], "Previous topic at this level"),
     bind(Group::Move, Action::Root, &[key('g'), special(KeyCode::Home)], "Go to the root"),
 
-    bind(Group::Topics, Action::AddChild, &[special(KeyCode::Tab)], "Add a child"),
-    bind(Group::Topics, Action::AddSibling, &[special(KeyCode::Enter)], "Add a sibling below"),
-    bind(Group::Topics, Action::Edit, &[key('e'), key('i')], "Edit the text"),
-    bind(Group::Topics, Action::Change, &[key('c')], "Replace the text"),
+    bind(Group::Topics, Action::AddChild, &[special(KeyCode::Tab)], "Add a sub-section"),
+    bind(Group::Topics, Action::AddSibling, &[special(KeyCode::Enter)], "Add a section after"),
+    bind(Group::Topics, Action::Edit, &[key('e'), key('i')], "Edit the heading"),
+    bind(Group::Topics, Action::Change, &[key('c')], "Replace the heading"),
     bind(Group::Topics, Action::Cut, &[key('d'), special(KeyCode::Delete)], "Cut, with everything under it"),
     bind(Group::Topics, Action::Copy, &[key('y')], "Copy, with everything under it"),
     bind(Group::Topics, Action::Paste, &[key('p')], "Paste as the last child"),
 
     bind(Group::Structure, Action::Fold, &[key(' ')], "Fold or unfold"),
+    bind(Group::Structure, Action::ToggleBlocks, &[key('b')], "Show or hide content blocks"),
     bind(Group::Structure, Action::MoveDown, &[key('J')], "Swap with the sibling below"),
     bind(Group::Structure, Action::MoveUp, &[key('K')], "Swap with the sibling above"),
     bind(Group::Structure, Action::Outdent, &[key('H')], "Move out, after the parent"),
@@ -273,12 +275,13 @@ const fn hint(context: Context, actions: &'static [Action], label: &'static str)
 #[rustfmt::skip]
 pub const HINTS: &[Hint] = &[
     hint(Context::Map, &[Action::Parent, Action::Down, Action::Up, Action::Child], "move"),
-    hint(Context::Map, &[Action::AddChild], "child"),
-    hint(Context::Map, &[Action::AddSibling], "sibling"),
+    hint(Context::Map, &[Action::AddChild], "sub-section"),
+    hint(Context::Map, &[Action::AddSibling], "section"),
     hint(Context::Map, &[Action::Edit], "edit"),
     hint(Context::Map, &[Action::Cut], "cut"),
     hint(Context::Map, &[Action::Paste], "paste"),
     hint(Context::Map, &[Action::Fold], "fold"),
+    hint(Context::Map, &[Action::ToggleBlocks], "blocks"),
     hint(Context::Map, &[Action::MoveDown, Action::MoveUp], "reorder"),
     hint(Context::Map, &[Action::Outdent, Action::Indent], "out/in"),
     hint(Context::Map, &[Action::Undo], "undo"),

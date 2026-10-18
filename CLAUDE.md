@@ -1,6 +1,6 @@
 # mull
 
-Terminal mind mapper (Rust, ratatui 0.30). Maps are Markdown files. The
+Terminal outline editor for Markdown, drawn as a mind map (Rust, ratatui 0.30). The
 crate is `mullmd` on crates.io; the command and the library are `mull`.
 
 - Gate: `just ci` (fmt, clippy `-D warnings`, tests), the same recipe CI
@@ -15,9 +15,10 @@ crate is `mullmd` on crates.io; the command and the library are `mull`.
   (`HINTS`), help screen, `--keys` and README all derive from it. After
   changing a binding, replace the README key tables with `just keys`
   output (a test enforces this).
-- The map's model is in `docs/design.md` ("The model", "The file"): nodes
-  have kinds, and `tree::Node::check` holds the rules that keep a tree
-  writable as Markdown. Every change in `app.rs` goes through `settle` or a
+- The map's model is in `docs/design.md` ("The model", "The file"):
+  sections (headings) are the nodes, everything else (lists included) is a
+  move-only block, front matter is metadata on `markdown::Map`, and
+  `tree::Node::check` holds the rules that keep a tree writable as Markdown. Every change in `app.rs` goes through `settle` or a
   check; new rules go in `check` with a test. `markdown.rs` works around
   markdown-rs 1.0.0 bugs (listed in the design doc); don't remove one
   without its test going green some other way.

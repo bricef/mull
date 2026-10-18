@@ -6,7 +6,7 @@ use std::fs;
 
 use mull::{
     markdown,
-    tree::{BlockKind, Kind, Marker, Node},
+    tree::{BlockKind, Kind, Node},
 };
 
 fn fixture() -> String {
@@ -74,8 +74,14 @@ fn saving_settles_after_one_save() {
 }
 
 #[test]
+fn the_map_follows_the_rules() {
+    let map = markdown::parse(&fixture(), "kitchen-sink");
+    assert_eq!(map.root.check(), Ok(()));
+}
+
+#[test]
 fn code_comments_stay_inside_their_code() {
-    let tree = markdown::parse(&fixture(), "kitchen-sink");
+    let tree = markdown::parse(&fixture(), "kitchen-sink").root;
     let headings: Vec<&str> = all_nodes(&tree)
         .into_iter()
         .filter(|n| n.is_heading())
@@ -97,15 +103,22 @@ fn code_comments_stay_inside_their_code() {
 }
 
 #[test]
-fn blocks_come_through_whole() {
-    let tree = markdown::parse(&fixture(), "kitchen-sink");
+fn front_matter_is_metadata_and_four_top_level_headings_make_a_document() {
+    let map = markdown::parse(&fixture(), "kitchen-sink");
     assert_eq!(
-        tree.kind,
-        Kind::Document,
-        "front matter and two top-level headings"
+        map.front_matter.as_deref(),
+        Some("---\ntitle: Kitchen sink\ntags: [markdown, test]\n---")
     );
-    assert_eq!(tree.children[0].kind, Kind::Block(BlockKind::FrontMatter));
+    assert_eq!(map.root.kind, Kind::Document);
+    assert!(
+        map.root.children.iter().all(Node::is_heading),
+        "nothing above the first heading"
+    );
+}
 
+#[test]
+fn blocks_come_through_whole() {
+    let tree = markdown::parse(&fixture(), "kitchen-sink").root;
     let tables = section(&tree, "Tables");
     assert_eq!(tables.children.len(), 1);
     assert_eq!(tables.children[0].kind, Kind::Block(BlockKind::Table));
@@ -113,6 +126,7 @@ fn blocks_come_through_whole() {
 
     let kinds: Vec<&Kind> = all_nodes(&tree).into_iter().map(|n| &n.kind).collect();
     for kind in [
+        BlockKind::List,
         BlockKind::Definition,
         BlockKind::Footnote,
         BlockKind::Quote,
@@ -125,18 +139,23 @@ fn blocks_come_through_whole() {
 }
 
 #[test]
-fn ordered_lists_keep_their_numbers_and_delimiters() {
-    let tree = markdown::parse(&fixture(), "kitchen-sink");
-    let three = all_nodes(&tree)
-        .into_iter()
-        .find(|n| n.text == "Parenthesis style, starting at three")
-        .expect("the item is there");
-    assert!(matches!(
-        three.kind,
-        Kind::Item(style) if style.marker == Marker::Ordered { number: 3, delimiter: ')' }
-    ));
-    let saved = markdown::serialize(&tree);
-    assert!(saved.contains("\n3) Parenthesis style, starting at three\n4) Four\n"));
-    assert!(saved.contains("\n[ref]: https://example.com/ref \"Reference title\"\n"));
-    assert!(saved.contains("\n- [ ] A task to do\n"));
+fn lists_are_blocks_kept_exactly_as_written() {
+    let tree = markdown::parse(&fixture(), "kitchen-sink").root;
+    let lists = section(&tree, "Lists");
+    assert!(
+        lists
+            .children
+            .iter()
+            .all(|c| c.kind == Kind::Block(BlockKind::List))
+    );
+    assert_eq!(lists.children.len(), 8);
+    let saved = markdown::serialize(&markdown::parse(&fixture(), "kitchen-sink"));
+    for exact in [
+        "\n1. First\n2. Second\n   1. Nested ordered\n   2. Again\n10. Ten\n",
+        "\n3) Parenthesis style, starting at three\n4) Four\n",
+        "\n- [ ] A task to do\n- [x] A task done\n  - [ ] A nested task\n",
+        "\n- Lazy continuation:\nthis line isn't indented but still belongs to the item.\n",
+    ] {
+        assert!(saved.contains(exact), "{exact:?} not kept");
+    }
 }
