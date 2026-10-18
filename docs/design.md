@@ -18,6 +18,7 @@ is written back.
 | Block | content: a paragraph, code, a table, a quote, HTML, maths, front matter, a link or footnote definition, a rule | the exact Markdown source, any number of lines | none |
 
 Headings and items are **topics**: you add, type and rename them in mull.
+A new topic left empty when you press Enter is dropped, as with Esc.
 Blocks are **content**: mull shows them as leaves and lets you move, cut,
 copy and paste them, but never edits them; that's what a Markdown editor is
 for. A topic's text is raw inline Markdown on one line (`tree::normalize_text`),
@@ -193,15 +194,12 @@ means 24-bit, otherwise the nearest xterm-256 colour, and `NO_COLOR` (or
 2. **Persist folds?** h-m-m doesn't. Options are a marker in the text, an
    HTML comment, or a sidecar file. Each costs some of the plain-Markdown
    promise.
-3. **Empty topics.** Enter on a new, empty topic keeps it, as `-` or `#`.
-   Dropping it instead (as Esc does) would be tidier, and would avoid a
-   markdown-rs quirk: a sub-list ending in an empty item reads back loose.
-4. **Classic radial layout.** The root in the middle, with children
+3. **Classic radial layout.** The root in the middle, with children
    split left and right like a drawn mind map, instead of everything flowing
    right.
-5. **System clipboard.** `y`/`d`/`p` use an internal register; h-m-m uses
+4. **System clipboard.** `y`/`d`/`p` use an internal register; h-m-m uses
    the system clipboard via xclip/wl-clipboard.
-6. **Search** (`/`, `n`, `N`), **export** (HTML via Markmap, PNG), and
+5. **Search** (`/`, `n`, `N`), **export** (HTML via Markmap, PNG), and
    **mouse** support are the obvious next features.
-7. **More themes.** A light palette (Catppuccin Latte) for light terminals,
+6. **More themes.** A light palette (Catppuccin Latte) for light terminals,
    chosen with a `--theme` flag or a config file.

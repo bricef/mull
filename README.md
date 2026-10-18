@@ -145,7 +145,7 @@ the file's permissions. Folds are view state and aren't saved.
 
 | Keys | Action |
 |---|---|
-| `Enter` | Keep the text |
+| `Enter` | Keep the text; empty new ones go |
 | `Esc` `^c` | Discard; drops a new topic |
 | `←` `^b` | Cursor left |
 | `→` `^f` | Cursor right |

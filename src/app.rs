@@ -521,6 +521,11 @@ impl App {
             return;
         };
         let (kind, text) = typed(&node.kind, editor.text());
+        if new_topic && text.is_empty() {
+            // A new topic left empty goes, as it would with Esc.
+            self.drop_new_topic();
+            return;
+        }
         if node.kind == kind && node.text == text {
             return;
         }
@@ -545,11 +550,19 @@ impl App {
         if let Mode::Edit {
             new_topic: true, ..
         } = self.mode
-            && let Some(before) = self.undo.pop()
         {
-            self.restore(before);
+            self.drop_new_topic();
         }
         self.mode = Mode::Map;
+    }
+
+    /// Take back the topic just added for typing: its creation is the last
+    /// change recorded, so undoing it removes the topic and leaves nothing
+    /// to redo.
+    fn drop_new_topic(&mut self) {
+        if let Some(before) = self.undo.pop() {
+            self.restore(before);
+        }
     }
 
     // Files
@@ -692,6 +705,37 @@ mod tests {
         assert_eq!(app.selected, vec![0]);
         assert!(matches!(app.mode, Mode::Map));
         assert!(app.is_dirty());
+    }
+
+    #[test]
+    fn enter_on_an_empty_new_topic_drops_it() {
+        let mut app = app(Node::new("Root"));
+        press(&mut app, KeyCode::Tab);
+        keys(&mut app, "  ");
+        press(&mut app, KeyCode::Enter);
+        assert!(app.tree.children.is_empty());
+        assert_eq!(app.selected, Vec::<usize>::new());
+        assert!(matches!(app.mode, Mode::Map));
+        assert!(!app.is_dirty());
+        keys(&mut app, "u");
+        assert_eq!(
+            app.message.as_ref().map(|m| m.text.as_str()),
+            Some("Nothing to undo"),
+            "dropping leaves no trace in the history"
+        );
+    }
+
+    #[test]
+    fn clearing_an_existing_topic_keeps_it() {
+        let mut app = app(Node::with_children(
+            "Root",
+            vec![Node::new("A").with(vec![Node::new("a1")])],
+        ));
+        app.selected = vec![0];
+        keys(&mut app, "c");
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.tree.children[0].text, "");
+        assert_eq!(app.tree.children[0].children.len(), 1, "its subtree stays");
     }
 
     #[test]

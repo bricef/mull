@@ -237,7 +237,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(Group::File, Action::Quit, &[key('q'), ctrl('c')], "Quit (twice if unsaved)"),
     bind(Group::File, Action::Help, &[key('?')], "Show all keys"),
 
-    bind(Group::Typing, Action::Commit, &[special(KeyCode::Enter)], "Keep the text"),
+    bind(Group::Typing, Action::Commit, &[special(KeyCode::Enter)], "Keep the text; empty new ones go"),
     bind(Group::Typing, Action::Cancel, &[special(KeyCode::Esc), ctrl('c')], "Discard; drops a new topic"),
     bind(Group::Typing, Action::CursorLeft, &[special(KeyCode::Left), ctrl('b')], "Cursor left"),
     bind(Group::Typing, Action::CursorRight, &[special(KeyCode::Right), ctrl('f')], "Cursor right"),
