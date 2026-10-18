@@ -2,7 +2,7 @@
 # The crate is mullmd (mull is taken on crates.io); the command and the
 # library are still called mull.
 name = "mullmd"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
