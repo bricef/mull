@@ -1,6 +1,7 @@
 # mull
 
-Terminal mind mapper (Rust, ratatui 0.30). Maps are Markdown files.
+Terminal mind mapper (Rust, ratatui 0.30). Maps are Markdown files. The
+crate is `mullmd` on crates.io; the command and the library are `mull`.
 
 - Gate: `just ci` (fmt, clippy `-D warnings`, tests), the same recipe CI
   runs, on the toolchain pinned in `rust-toolchain.toml`. Run it before

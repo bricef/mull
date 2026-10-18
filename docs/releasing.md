@@ -68,7 +68,7 @@ machines, and `rust-toolchain.toml` pins the compiler for everyone.
 4. **A crates.io token for the first publish.** crates.io won't create a
    new crate through trusted publishing, so the first release uses a token.
    On crates.io, under Account Settings → API Tokens, make one with the
-   `publish-new` and `publish-update` scopes, restricted to the crate `mull`,
+   `publish-new` and `publish-update` scopes, restricted to the crate `mullmd`,
    with a short expiry. Then:
 
    ```sh
@@ -76,7 +76,7 @@ machines, and `rust-toolchain.toml` pins the compiler for everyone.
    ```
 
 5. **Trusted publishing, after the first release.** On crates.io, open
-   mull's settings → Trusted Publishing and add GitHub repository
+   mullmd's settings → Trusted Publishing and add GitHub repository
    `bricef/mull`, workflow `release.yml`, environment `release`. Then switch
    the workflow over and drop the token:
 

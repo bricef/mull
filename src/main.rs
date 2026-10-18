@@ -8,7 +8,7 @@ use ratatui::crossterm::event;
 /// A keyboard-driven mind mapper for the terminal. Maps are plain Markdown
 /// files.
 #[derive(Parser)]
-#[command(version)]
+#[command(name = "mull", version)]
 struct Cli {
     /// The Markdown file to open. A new one is created when you first save.
     #[arg(required_unless_present = "keys")]

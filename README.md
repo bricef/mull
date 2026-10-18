@@ -21,9 +21,12 @@ always listed along the bottom of the screen.
 ## Install
 
 ```sh
-cargo install mull          # from crates.io
+cargo install mullmd        # from crates.io
 cargo install --path .      # from a checkout
 ```
+
+Either way the command is `mull`. The crate is called `mullmd` because
+another `mull` (a plain-text wiki) already has that name on crates.io.
 
 Each [GitHub release](https://github.com/bricef/mull/releases) also has
 prebuilt binaries for Linux, macOS and Windows.

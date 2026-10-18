@@ -20,6 +20,19 @@ fn print_draws_the_map_as_text() {
 }
 
 #[test]
+fn the_command_calls_itself_mull_whatever_the_crate_is_called() {
+    let out = mull().arg("--version").output().unwrap();
+    let version = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(version, format!("mull {}\n", env!("CARGO_PKG_VERSION")));
+    let out = mull().arg("--help").output().unwrap();
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .contains("Usage: mull ")
+    );
+}
+
+#[test]
 fn a_file_is_required() {
     assert!(!mull().output().unwrap().status.success());
 }

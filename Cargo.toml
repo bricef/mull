@@ -1,5 +1,7 @@
 [package]
-name = "mull"
+# The crate is mullmd (mull is taken on crates.io); the command and the
+# library are still called mull.
+name = "mullmd"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
@@ -10,6 +12,14 @@ readme = "README.md"
 keywords = ["mind-map", "markdown", "tui", "terminal", "outline"]
 categories = ["command-line-utilities", "text-editors"]
 include = ["/src", "/tests", "/README.md", "/LICENSE*"]
+
+[lib]
+name = "mull"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mull"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1.0.104"
