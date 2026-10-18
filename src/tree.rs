@@ -69,7 +69,6 @@ pub enum Problem {
     ContentAfterSection,
     TooDeep,
     NestedDocument,
-    ListsWouldMerge,
 }
 
 impl fmt::Display for Problem {
@@ -79,7 +78,6 @@ impl fmt::Display for Problem {
             Problem::ContentAfterSection => "Content has to come before a section's sub-sections",
             Problem::TooDeep => "Sections only nest six deep",
             Problem::NestedDocument => "Only the root can be the whole document",
-            Problem::ListsWouldMerge => "Two lists side by side would read back as one list",
         })
     }
 }
@@ -138,6 +136,16 @@ fn list_marker(source: &str) -> Option<ListMarker> {
     let digits = source.bytes().take_while(u8::is_ascii_digit).count();
     let delimiter = source[digits..].chars().next()?;
     (digits > 0 && matches!(delimiter, '.' | ')')).then_some(ListMarker::Numbered(delimiter))
+}
+
+/// Whether `second`, a list written straight after the list `first`, would
+/// read back as more of it: they share a bullet, or a numbering delimiter.
+pub fn lists_continue(first: &Node, second: &Node) -> bool {
+    let list = |node: &Node| match node.kind {
+        Kind::Block(BlockKind::List) => list_marker(&node.text),
+        _ => None,
+    };
+    list(first).is_some() && list(first) == list(second)
 }
 
 impl Node {
@@ -337,12 +345,7 @@ impl Node {
     fn check_children(&self, level: u8) -> Result<(), Problem> {
         let mut ceiling = 6;
         let mut seen_heading = false;
-        let mut previous_list: Option<ListMarker> = None;
         for child in &self.children {
-            let list = match child.kind {
-                Kind::Block(BlockKind::List) => list_marker(&child.text),
-                _ => None,
-            };
             match child.kind {
                 Kind::Document => return Err(Problem::NestedDocument),
                 Kind::Heading { level: stored } => {
@@ -361,12 +364,8 @@ impl Node {
                     if seen_heading {
                         return Err(Problem::ContentAfterSection);
                     }
-                    if list.is_some() && list == previous_list {
-                        return Err(Problem::ListsWouldMerge);
-                    }
                 }
             }
-            previous_list = list;
         }
         Ok(())
     }
@@ -534,35 +533,18 @@ mod tests {
         let nested = Node::heading(1, "R").with(vec![Node::document("d")]);
         assert_eq!(nested.check(), Err(Problem::NestedDocument));
 
-        let merging = Node::heading(1, "R").with(vec![
-            Node::block(BlockKind::List, "- a"),
-            Node::block(BlockKind::List, "- b"),
-        ]);
-        assert_eq!(merging.check(), Err(Problem::ListsWouldMerge));
-
         assert!(sections().check().is_ok());
     }
 
     #[test]
-    fn only_lists_that_continue_each_other_would_merge() {
-        let pair = |a: &str, b: &str| {
-            Node::heading(1, "R")
-                .with(vec![
-                    Node::block(BlockKind::List, a),
-                    Node::block(BlockKind::List, b),
-                ])
-                .check()
-        };
-        assert_eq!(pair("1. a", "3. b"), Err(Problem::ListsWouldMerge));
-        assert!(pair("- a", "* b").is_ok());
-        assert!(pair("1. a", "1) b").is_ok());
-        assert!(pair("- a", "1. b").is_ok());
-        let apart = Node::heading(1, "R").with(vec![
-            Node::block(BlockKind::List, "- a"),
-            paragraph("between"),
-            Node::block(BlockKind::List, "- b"),
-        ]);
-        assert!(apart.check().is_ok());
+    fn lists_continue_each_other_by_bullet_or_delimiter() {
+        let list = |source: &str| Node::block(BlockKind::List, source);
+        assert!(lists_continue(&list("- a"), &list("- b")));
+        assert!(lists_continue(&list("1. a"), &list("3. b")));
+        assert!(!lists_continue(&list("- a"), &list("* b")));
+        assert!(!lists_continue(&list("1. a"), &list("1) b")));
+        assert!(!lists_continue(&list("- a"), &list("1. b")));
+        assert!(!lists_continue(&paragraph("- a"), &list("- b")));
     }
 
     #[test]

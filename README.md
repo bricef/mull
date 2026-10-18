@@ -101,9 +101,12 @@ is layout that doesn't affect rendering: blank lines, underlined headings
 (written with `#`), closing `#`s and indented code (written fenced). mull
 says so when you open a file it would reformat.
 
+Two lists side by side stay two lists: since blank lines alone would merge
+lists that share a marker, mull puts an empty `<!-- -->` comment between
+them, which renders as nothing.
+
 Some trees can't be written as Markdown and read back the same, such as a
-block after a sub-section, or two lists side by side (which would read back
-as one). mull refuses those moves and says why. Saves are atomic, go through
+block after a sub-section. mull refuses those moves and says why. Saves are atomic, go through
 symlinks, and keep the file's permissions. Folds and hidden blocks are view
 state and aren't saved.
 

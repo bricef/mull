@@ -53,15 +53,13 @@ so mull keeps to the ones that can (`tree::Node::check`):
    written after a heading belongs to it.
 3. Sections nest at most six deep.
 4. Only the root can be the document.
-5. Two lists side by side whose markers continue each other (`-` and `-`,
-   `1.` and `3.`) would read back as one list, so they can't be neighbours.
 
 Adding and pasting place a node where the rules allow: a pasted block goes
 after the section's blocks, before its sub-sections, and a new section goes
 after the sub-sections. Outdenting a block out of a sub-section does the
 same one level up. A change that would still break a rule (moving a block
-below a sub-section, giving a block children, cutting what separated two
-lists) is refused with a message saying why, and the tree is left as it was.
+below a sub-section, giving a block children) is refused with a message
+saying why, and the tree is left as it was.
 
 ## The file
 
@@ -82,7 +80,24 @@ a map (`markdown::parse`):
 
 Saving writes the front matter, then walks the tree (`markdown::serialize`):
 sections as `#` headings and blocks exactly as read, with a blank line
-between each. A section's heading level is its stored level, raised if the
+between each.
+
+Two lists side by side whose markers continue each other (`-` and `-`, or
+`1.` and `3.`) are one list in CommonMark, however many blank lines stand
+between them. So the writer separates them the way the spec recommends,
+with an empty HTML comment that renders as nothing:
+
+```markdown
+- one list
+
+<!-- -->
+
+- another list
+```
+
+Reading drops that comment when it sits between two such lists
+(`markdown::LIST_SEPARATOR`), so the map keeps them as two blocks side by
+side; anywhere else, a comment is a block like any other. A section's heading level is its stored level, raised if the
 section has been moved deeper and lowered if needed so that it still closes
 the sections before it; a file that was never restructured keeps its
 levels.

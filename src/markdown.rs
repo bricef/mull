@@ -4,7 +4,9 @@
 
 use markdown::{mdast, unist::Position};
 
-use crate::tree::{BlockKind, Kind, Node, join_lines, normalize_text, written_level};
+use crate::tree::{
+    BlockKind, Kind, Node, join_lines, lists_continue, normalize_text, written_level,
+};
 
 /// A Markdown file as mull holds it: its front matter, kept aside as the
 /// file's metadata (never shown, never part of the structure), and the tree
@@ -23,6 +25,11 @@ impl From<Node> for Map {
         }
     }
 }
+
+/// Written between two lists that would otherwise read back as one, as
+/// CommonMark recommends: an empty HTML comment, which renders as nothing.
+/// Read back between two such lists, it's the boundary, not a block.
+pub const LIST_SEPARATOR: &str = "<!-- -->";
 
 /// CommonMark with GitHub's extensions and maths. Front matter is found by
 /// [`split_front_matter`] instead: markdown-rs 1.0.0 panics on files that
@@ -94,6 +101,7 @@ fn read(input: &str, name: &str) -> Map {
     while !open.is_empty() {
         close(&mut open, &mut document);
     }
+    drop_list_separators(&mut document);
     // One top-level heading holding everything is the root. Anything above
     // it, or a second one, makes the document the root.
     let root = if document.children.len() == 1 && document.children[0].is_heading() {
@@ -102,6 +110,25 @@ fn read(input: &str, name: &str) -> Map {
         document
     };
     Map { front_matter, root }
+}
+
+/// Take out the separators between lists that would otherwise be one list:
+/// the map holds the two lists side by side, and writing puts the
+/// separator back.
+fn drop_list_separators(node: &mut Node) {
+    let mut i = 1;
+    while i + 1 < node.children.len() {
+        let separator = node.children[i].kind == Kind::Block(BlockKind::Html)
+            && node.children[i].text.trim() == LIST_SEPARATOR;
+        if separator && lists_continue(&node.children[i - 1], &node.children[i + 1]) {
+            node.children.remove(i);
+        } else {
+            i += 1;
+        }
+    }
+    for child in &mut node.children {
+        drop_list_separators(child);
+    }
 }
 
 /// Front matter at the very start of a file, `---` to `---` (YAML) or `+++`
@@ -396,10 +423,16 @@ impl Writer {
         self.out.push('\n');
     }
 
-    /// A section's children: its blocks, then its sub-sections.
+    /// A section's children: its blocks, then its sub-sections. Two lists
+    /// side by side get a separator, or they'd read back as one.
     fn section(&mut self, children: &[Node], level: u8) {
         let mut ceiling = 6;
-        for child in children {
+        for (i, child) in children.iter().enumerate() {
+            if i > 0 && lists_continue(&children[i - 1], child) {
+                self.start();
+                self.out.push_str(LIST_SEPARATOR);
+                self.out.push('\n');
+            }
             match child.kind {
                 Kind::Heading { level: stored } => {
                     let written = written_level(level, stored, ceiling).min(6);
@@ -585,6 +618,31 @@ mod tests {
         assert_eq!(root.children.len(), 1);
         assert_eq!(root.children[0].kind, Kind::Block(BlockKind::List));
         assert_eq!(serialize(&Map::from(root)), doc);
+    }
+
+    #[test]
+    fn lists_side_by_side_stay_two_lists() {
+        let tree = Node::heading(1, "R").with(vec![
+            Node::block(BlockKind::List, "- a\n- b"),
+            Node::block(BlockKind::List, "- c"),
+            Node::block(BlockKind::List, "- d"),
+            Node::block(BlockKind::List, "1. one"),
+        ]);
+        let written = serialize(&Map::from(tree.clone()));
+        assert_eq!(
+            written,
+            "# R\n\n- a\n- b\n\n<!-- -->\n\n- c\n\n<!-- -->\n\n- d\n\n1. one\n"
+        );
+        assert_eq!(parse(&written, "x").root, tree);
+    }
+
+    #[test]
+    fn a_comment_elsewhere_is_a_block() {
+        let doc = "# R\n\n<!-- -->\n\n- a\n\n<!-- -->\n\n* b\n";
+        assert_eq!(
+            read_outline(doc),
+            "h1 R\n  Html <!-- -->\n  List - a\n  Html <!-- -->\n  List * b\n"
+        );
     }
 
     #[test]

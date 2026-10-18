@@ -913,26 +913,18 @@ mod tests {
     }
 
     #[test]
-    fn cutting_what_separates_two_lists_is_refused() {
-        let tree = Node::heading(1, "Root").with(vec![
+    fn cutting_what_separates_two_lists_leaves_two_lists() {
+        let mut app = app(Node::heading(1, "Root").with(vec![
             Node::block(BlockKind::List, "- a"),
             paragraph("between"),
             Node::block(BlockKind::List, "- b"),
-        ]);
-        let mut app = app(tree.clone());
+        ]));
         app.selected = vec![1];
         keys(&mut app, "d");
-        assert_eq!(app.tree, tree);
-        assert_eq!(
-            app.message.as_ref().map(|m| m.text.as_str()),
-            Some("Two lists side by side would read back as one list")
-        );
-        keys(&mut app, "p");
-        assert!(
-            app.message
-                .as_ref()
-                .is_some_and(|m| m.text.starts_with("Nothing to paste"))
-        );
+        assert_eq!(app.tree.children.len(), 2);
+        assert_eq!(app.markdown(), "# Root\n\n- a\n\n<!-- -->\n\n- b\n");
+        let reread = markdown::parse(&app.markdown(), "x").root;
+        assert_eq!(reread.children, app.tree.children);
     }
 
     #[test]

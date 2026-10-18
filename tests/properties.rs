@@ -64,24 +64,9 @@ fn block() -> impl Strategy<Value = Node> {
     ]
 }
 
-/// A section's blocks. Two lists in a row that would read back as one list
-/// aren't a map anyone can make, so the second goes.
+/// A section's blocks, lists side by side included.
 fn blocks() -> impl Strategy<Value = Vec<Node>> {
-    prop::collection::vec(block(), 0..4).prop_map(|blocks| {
-        let mut kept: Vec<Node> = Vec::new();
-        for block in blocks {
-            let merges = kept.last().is_some_and(|last| {
-                let marker = |n: &Node| n.text.chars().find(|c| !c.is_ascii_digit());
-                last.kind == Kind::Block(BlockKind::List)
-                    && block.kind == Kind::Block(BlockKind::List)
-                    && marker(last) == marker(&block)
-            });
-            if !merges {
-                kept.push(block);
-            }
-        }
-        kept
-    })
+    prop::collection::vec(block(), 0..4)
 }
 
 fn section(level: u8, depth: u32) -> BoxedStrategy<Node> {
