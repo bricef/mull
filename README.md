@@ -1,5 +1,7 @@
 # mull
 
+![mull TUI screenshot](docs/mull-screenshot.png)
+
 A keyboard-driven outline editor for Markdown, in the terminal, drawn as a
 mind map. A file's headings are the map: you add, rename, reorder and
 re-nest sections, and everything else in them (paragraphs, lists, code,
