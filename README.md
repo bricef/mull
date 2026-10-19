@@ -8,16 +8,6 @@ re-nest sections, and everything else in them (paragraphs, lists, code,
 tables) travels along. Files stay plain Markdown, so they diff cleanly,
 live happily in git, and render in anything that shows Markdown.
 
-```
-                ┌─ Getting there ─┬─ Flights
-                │                 └─ Train from Madrid
-Trip to Lisbon ─┼─ Where to stay ─┬─ Alfama
-                │                 └─ Baixa
-                │                ┌─ Tram 28
-                └─ Things to do ─┼─ Pastéis de Belém
-                                 └─ Sintra day trip
-```
-
 It's in the spirit of [h-m-m](https://github.com/nadrad/h-m-m), written in
 Rust with [ratatui](https://ratatui.rs). The keys you can use right now are
 always listed along the bottom of the screen.
